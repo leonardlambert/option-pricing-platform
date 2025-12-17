@@ -1,0 +1,9 @@
+streamlit>=1.30.0
+numpy
+pandas
+scipy
+matplotlib
+plotly
+numba
+cvxpy
+massive

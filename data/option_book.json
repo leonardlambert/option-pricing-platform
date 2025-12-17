@@ -1,0 +1,23 @@
+[
+  {
+    "id": "20251215153524",
+    "name": "My Strategy",
+    "timestamp": "2025-12-15 15:35:24",
+    "S0": 100.0,
+    "T": 1.0,
+    "r": 0.05,
+    "sigma": 0.2,
+    "legs": [
+      {
+        "type": "call",
+        "strike": 110.0,
+        "position": 1
+      },
+      {
+        "type": "put",
+        "strike": 90.0,
+        "position": 1
+      }
+    ]
+  }
+]

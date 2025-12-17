@@ -1,0 +1,801 @@
+import streamlit as st
+import numpy as np
+import pandas as pd
+from datetime import datetime, timedelta
+import plotly.graph_objects as go
+
+# Local Imports
+from src.dashboard_utils import initialize_session_state, add_strategy_to_book, reset_book, delete_strategy, interpolate_volatility
+from pricing.pricing import black_scholes_price, compute_greeks, implied_volatility
+from pricing.FFT_pricer import fft_pricer
+from pricing.characteristic_functions import phi_bsm, phi_vg, phi_merton
+from src.visualizer import plot_spread_analysis, plot_simulation_results, plot_efficient_frontier
+from src.simulation import simulate_gbm_paths, simulate_vg_paths, simulate_mjd_paths
+from src.market_data import get_option_aggregates, get_option_previous_close, get_stock_history_vol, get_underlying_history_range
+
+# Page Config
+st.set_page_config(page_title="Market Risk & Pricing Platform", layout="wide", page_icon="📈", initial_sidebar_state="collapsed")
+initialize_session_state()
+
+# Compact CSS & Theme Support
+st.markdown("""
+    <style>
+        /* Serious Font Import (Inter) */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
+        
+        html, body, [class*="css"]  {
+            font-family: 'Inter', 'Segoe UI', 'Roboto', sans-serif;
+        }
+
+        .block-container {
+            padding-top: 3rem; /* Moderate spacing */
+            padding-bottom: 0rem;
+        }
+        h1 {
+            font-family: 'Inter', 'Segoe UI', sans-serif;
+            font-weight: 600;
+            font-size: 1.5rem !important; /* Smaller, serious title */
+            margin-top: 0rem !important;
+            margin-bottom: 0rem !important;
+            padding-bottom: 0rem !important;
+        }
+        
+        /* Increase space between title and tabs slightly */
+        .stTabs {
+            margin-top: 1rem;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
+# Theme Toggle
+with st.sidebar:
+    st.title("Settings")
+    theme = st.radio("Theme", ["Dark", "Light"], index=0)
+
+if theme == "Light":
+    st.markdown("""
+        <style>
+            [data-testid="stAppViewContainer"] {
+                background-color: #ffffff;
+                color: #000000;
+            }
+            [data-testid="stSidebar"] {
+                background-color: #f0f2f6;
+            }
+            .stMarkdown, .stText, h1, h2, h3 {
+                color: #000000 !important;
+            }
+        </style>
+    """, unsafe_allow_html=True)
+
+st.title("Market Risk & Pricing Platform")
+
+# Tabs
+tabs = st.tabs(["Pricing & Greeks", "Spread Visualizer", "PnL Visualization", "Volatility Smile", "Volatility Surface"])
+
+# --- TAB 1: Single Option Pricing ---
+with tabs[0]:
+    # No subheader
+    
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        S = st.number_input("Spot Price (S)", value=100.0)
+        K = st.number_input("Strike Price (K)", value=100.0)
+    with col2:
+        T = st.number_input("Time to Maturity (T)", value=1.0)
+        r = st.number_input("Risk-Free Rate (r)", value=0.05)
+    with col3:
+        sigma = st.number_input("Volatility (σ)", value=0.2)
+        option_type = st.selectbox("Type", ["C", "P"])
+    with col4:
+        model = st.selectbox("Pricing Model", ["Black-Scholes", "FFT (Variance Gamma)", "FFT (Merton)"])
+
+    if st.button("Calculate Price"):
+        st.divider()
+        c1, c2 = st.columns(2)
+        
+        # 1. Pricing
+        price = 0.0
+        if model == "Black-Scholes":
+            price = black_scholes_price(S, K, T, r, sigma, option_type)
+        elif model == "FFT (Variance Gamma)":
+            # Hardcoded VG params for demo, or add inputs
+            theta, nu = -0.1, 0.2 
+            price = fft_pricer(K, S, T, r, phi_vg, args=(sigma, theta, nu), call=(option_type=="C"))
+            st.caption(f"Used VG Params: θ={theta}, ν={nu}")
+        elif model == "FFT (Merton)":
+            # Hardcoded Merton params
+            lamb, mu_j, sigma_j = 0.1, -0.05, 0.2
+            price = fft_pricer(K, S, T, r, phi_merton, args=(sigma, lamb, mu_j, sigma_j), call=(option_type=="C"))
+            st.caption(f"Used Merton Params: λ={lamb}, μ_j={mu_j}, σ_j={sigma_j}")
+            
+        # 2. Greeks (BSM Approximation for all for simplicity, or implement Model-Specific)
+        # Using BSM greeks as proxy or exact if BSM
+        delta, gamma, theta_g, vega, rho = compute_greeks(S, K, T, r, sigma, option_type)
+        
+        with c1:
+            st.metric("Option Price", f"${price:.4f}")
+            
+        with c2:
+            g_col1, g_col2 = st.columns(2)
+            g_col1.write(f"**Delta**: {delta:.4f}")
+            g_col1.write(f"**Gamma**: {gamma:.4f}")
+            g_col1.write(f"**Theta**: {theta_g:.4f}")
+            g_col2.write(f"**Vega**: {vega:.4f}")
+            g_col2.write(f"**Rho**: {rho:.4f}")
+
+# --- TAB 2: Spread Visualizer ---
+with tabs[1]:
+    
+    col_setup, col_plot = st.columns([1, 2])
+    
+    with col_setup:
+        st.subheader("Market Params")
+        
+        # Model Selection
+        pricing_model = st.selectbox("Model", ["Black-Scholes", "Variance Gamma", "Merton Jump Diffusion"], key="spread_model")
+        
+        S0_spread = st.number_input("Spot", value=100.0, key="s_spread")
+        T_spread = st.number_input("Maturity", value=1.0, key="t_spread")
+        r_spread = st.number_input("Rate", value=0.05, key="r_spread")
+        sigma_spread = st.number_input("Vol", value=0.2, key="v_spread")
+        
+        # Model Specific Params
+        model_params = {}
+        if pricing_model == "Variance Gamma":
+            model_params["theta"] = st.number_input("Theta (Drift)", value=-0.1, key="vg_theta")
+            model_params["nu"] = st.number_input("Nu (Var)", value=0.2, key="vg_nu")
+        elif pricing_model == "Merton Jump Diffusion":
+            model_params["lamb"] = st.number_input("Lambda (Jump Freq)", value=0.1, key="mjd_lamb")
+            model_params["mu_j"] = st.number_input("Mean Jump", value=-0.05, key="mjd_muj")
+            model_params["sigma_j"] = st.number_input("Jump Vol", value=0.2, key="mjd_sigmaj")
+        
+        st.subheader("Legs")
+        num_legs = st.number_input("Legs Count", 1, 6, 2)
+        legs = []
+        for i in range(num_legs):
+            c_type, c_strike, c_pos = st.columns(3)
+            l_type = c_type.selectbox(f"Type {i+1}", ["C", "P"], key=f"l_type_{i}")
+            l_strike = c_strike.number_input(f"Strike {i+1}", 50.0, 200.0, 100.0, key=f"l_strike_{i}")
+            l_pos = c_pos.selectbox(f"Pos {i+1}", [1, -1], format_func=lambda x: "Long" if x==1 else "Short", key=f"l_pos_{i}")
+            legs.append({"type": l_type, "strike": l_strike, "position": l_pos})
+            
+        st.divider()
+        strat_name = st.text_input("Strategy Name", value="My Strategy", placeholder="e.g. Iron Condor")
+        if st.button("💾 Save Strategy to Book"):
+            add_strategy_to_book(S0_spread, T_spread, r_spread, sigma_spread, legs, name=strat_name)
+            st.success(f"Strategy '{strat_name}' saved!")
+
+    with col_plot:
+        # Calculation
+        S_range = np.linspace(S0_spread * 0.5, S0_spread * 1.5, 50) # Reduced points for FFT speed
+        spread_vals = np.zeros_like(S_range)
+        payoff_vals = np.zeros_like(S_range)
+        
+        # Aggregate Greeks (Only for BSM)
+        greeks_agg = {k: np.zeros_like(S_range) for k in ["Delta", "Gamma", "Theta", "Vega", "Rho"]}
+        net_premium = 0.0
+        
+        # Progress Bar for slower FFT
+        progress_text = "Pricing Spread..."
+        my_bar = st.progress(0, text=progress_text)
+        
+        total_steps = len(legs) * len(S_range) + len(legs) # approx
+        step_ctr = 0
+        
+        for leg in legs:
+            # 1. Net Premium (Price at S0)
+            if pricing_model == "Black-Scholes":
+                leg_price = black_scholes_price(S0_spread, leg["strike"], T_spread, r_spread, sigma_spread, leg["type"])
+            elif pricing_model == "Variance Gamma":
+                leg_price = fft_pricer(leg["strike"], S0_spread, T_spread, r_spread, phi_vg, 
+                                     args=(sigma_spread, model_params["theta"], model_params["nu"]), 
+                                     call=(leg["type"]=="C"))
+            elif pricing_model == "Merton Jump Diffusion":
+                leg_price = fft_pricer(leg["strike"], S0_spread, T_spread, r_spread, phi_merton, 
+                                     args=(sigma_spread, model_params["lamb"], model_params["mu_j"], model_params["sigma_j"]), 
+                                     call=(leg["type"]=="C"))
+            
+            net_premium += leg["position"] * leg_price
+            
+            # 2. Range Calculation
+            for idx, s_i in enumerate(S_range):
+                # Update progress
+                step_ctr += 1
+                if step_ctr % 10 == 0:
+                    my_bar.progress(min(step_ctr / total_steps, 1.0), text=progress_text)
+
+                # Pricing at s_i
+                if pricing_model == "Black-Scholes":
+                    p_i = black_scholes_price(s_i, leg["strike"], T_spread, r_spread, sigma_spread, leg["type"])
+                    d, g, th, v, rh = compute_greeks(s_i, leg["strike"], T_spread, r_spread, sigma_spread, leg["type"])
+                    greeks_agg["Delta"][idx] += leg["position"] * d
+                    greeks_agg["Gamma"][idx] += leg["position"] * g
+                    greeks_agg["Theta"][idx] += leg["position"] * th
+                    greeks_agg["Vega"][idx] += leg["position"] * v
+                    greeks_agg["Rho"][idx] += leg["position"] * rh
+                elif pricing_model == "Variance Gamma":
+                    p_i = fft_pricer(leg["strike"], s_i, T_spread, r_spread, phi_vg, 
+                                   args=(sigma_spread, model_params["theta"], model_params["nu"]), 
+                                   call=(leg["type"]=="C"), N=2048) # Reduced N for speed
+                elif pricing_model == "Merton Jump Diffusion":
+                     p_i = fft_pricer(leg["strike"], s_i, T_spread, r_spread, phi_merton, 
+                                    args=(sigma_spread, model_params["lamb"], model_params["mu_j"], model_params["sigma_j"]), 
+                                    call=(leg["type"]=="C"), N=2048)
+                
+                spread_vals[idx] += leg["position"] * p_i
+                
+                # Payoff at maturity (Independent of model)
+                intrinsic = max(0, s_i - leg["strike"]) if leg["type"] == "C" else max(0, leg["strike"] - s_i)
+                payoff_vals[idx] += leg["position"] * intrinsic
+
+        my_bar.empty()
+        profit_vals = payoff_vals - net_premium
+        
+        fig1, fig2 = plot_spread_analysis(S_range, spread_vals, profit_vals, greeks_agg)
+        
+        st.plotly_chart(fig1, key="spread_plot_1", width='stretch')
+        
+        if pricing_model == "Black-Scholes":
+            with st.expander("View Greeks"):
+                st.plotly_chart(fig2, key="spread_plot_2", width='stretch')
+        else:
+            st.caption("Greeks visualization available only for Black-Scholes model.")
+            
+        st.info(f"Net Premium ({pricing_model}): ${net_premium:.2f}")
+
+# --- TAB 3: PnL Visualization ---
+with tabs[2]:
+    
+    if not st.session_state.book:
+        st.warning("Book is empty. Add strategies in 'Spread Visualizer' first.")
+    else:
+        # Improved Table with Expanders
+        st.info(f"Total Strategies: {len(st.session_state.book)}")
+        
+        entries_to_delete = []
+        
+        for idx, strat in enumerate(st.session_state.book):
+            name = strat.get("name", "Untitled")
+            timestamp = strat.get("timestamp", "N/A")
+            params = f"S0={strat['S0']}, T={strat['T']}, r={strat['r']}, σ={strat['sigma']}"
+            
+            with st.expander(f"📍 **{name}** | 🕒 {timestamp}"):
+                c_details, c_action = st.columns([4, 1])
+                with c_details:
+                    st.write(f"**Parameters**: {params}")
+                    # Leg Details
+                    leg_data = []
+                    for leg in strat["legs"]:
+                        pos_str = "Long (+1)" if leg["position"] == 1 else "Short (-1)"
+                        type_str = leg["type"].title()
+                        strike = leg["strike"]
+                        leg_data.append({"Position": pos_str, "Type": type_str, "Strike": strike})
+                    st.table(pd.DataFrame(leg_data))
+                
+                with c_action:
+                    if st.button("Delete Strategy", key=f"del_{idx}"):
+                        entries_to_delete.append(idx)
+        
+        if entries_to_delete:
+            # Delete in reverse order to avoid index shifting issues (though standard button rerun handles it usually, safe practice)
+            for i in sorted(entries_to_delete, reverse=True):
+                delete_strategy(i)
+            st.rerun()
+
+        if st.button("🗑️ Clear Entire Book"):
+            reset_book()
+            st.rerun()
+            
+        st.divider()
+        # Simulation (only if book not empty after deletes)
+        if st.session_state.book:
+            c_sim1, c_sim2 = st.columns(2)
+            with c_sim1:
+                n_paths = st.number_input("Paths", 1000, 50000, 5000)
+                steps = st.number_input("Steps", 10, 365, 50)
+                T_sim = st.number_input("Horizon (Years)", 0.1, 5.0, 1.0)
+            with c_sim2:
+                process = st.selectbox("Process", ["GBM", "Variance Gamma", "Merton Jump Diffusion"])
+                
+            if st.button("Run Monte Carlo"):
+                # Simulation logic ...
+                base_params = st.session_state.book[0]
+                S0_sim = base_params["S0"]
+                r_sim = base_params["r"]
+                sigma_sim = base_params["sigma"]
+                
+                with st.spinner("Simulating..."):
+                    if process == "GBM":
+                        paths = simulate_gbm_paths(S0_sim, r_sim, sigma_sim, T_sim, steps, n_paths)
+                    elif process == "Variance Gamma":
+                        paths = simulate_vg_paths(S0_sim, r_sim, sigma_sim, theta=-0.1, nu=0.2, T=T_sim, steps=steps, n_paths=n_paths)
+                    else:
+                        paths = simulate_mjd_paths(S0_sim, r_sim, sigma_sim, lamb=0.1, mu_j=-0.05, sigma_j=0.2, T=T_sim, steps=steps, n_paths=n_paths)
+                    
+                    S_T = paths[:, -1]
+                    pnl = np.zeros(n_paths)
+                    initial_book_value = 0.0
+                    for strat in st.session_state.book:
+                        for leg in strat["legs"]:
+                            p = black_scholes_price(strat["S0"], leg["strike"], strat["T"], strat["r"], strat["sigma"], leg["type"])
+                            initial_book_value += leg["position"] * p
+                    
+                    for i in range(n_paths):
+                        spot = S_T[i]
+                        val_t = 0.0
+                        for strat in st.session_state.book:
+                            remaining_t = max(0, strat["T"] - T_sim)
+                            for leg in strat["legs"]:
+                                if remaining_t == 0:
+                                    val = max(0, spot - leg["strike"]) if leg["type"] == "C" else max(0, leg["strike"] - spot)
+                                else:
+                                    val = black_scholes_price(spot, leg["strike"], remaining_t, strat["r"], strat["sigma"], leg["type"])
+                                val_t += leg["position"] * val
+                        pnl[i] = (val_t * np.exp(-r_sim * T_sim) - initial_book_value)
+                    
+                    pnl_percent = (pnl / (initial_book_value if initial_book_value!=0 else 1.0)) * 100
+                    
+                    st.plotly_chart(plot_simulation_results(pnl_percent, process))
+                    st.metric("VaR (95%)", f"{np.percentile(pnl, 5):.2f}")
+                    st.metric("CVaR (95%)", f"{np.mean(pnl[pnl <= np.percentile(pnl, 5)]):.2f}")
+
+
+# --- TAB 5: Volatility Smile ---
+with tabs[3]:
+    # st.header("Volatility Smile (Previous Day)")
+    
+    col_input, col_view = st.columns([1, 2])
+    
+    with col_input:
+        st.subheader("Market Parameters")
+        ticker = st.text_input("Ticker", value="AAPL", key="smile_ticker").upper()
+        
+        c_exp1, c_exp2 = st.columns(2)
+        exp_date = c_exp1.date_input("Expiration", value=datetime.now() + timedelta(days=30), key="smile_exp")
+        op_type = c_exp2.selectbox("Type", ["C", "P"], key="smile_op_type")
+        
+        strike = st.number_input("Central Strike", value=275.0, step=1.0, key="smile_strike")
+
+        st.divider()
+        st.subheader("Data Fetching")
+        
+        if st.button("Fetch Data", key="smile_fetch"):
+            # Clear conflicting surface data if any
+            if "surface_data" in st.session_state: del st.session_state["surface_data"]
+            if "custom_data_table" in st.session_state: del st.session_state["custom_data_table"]
+            
+            with st.spinner("Fetching data from Massive..."):
+                # --- STEP 1: Central Strike Only ---
+                center_df, err_msg, contract_symbol = get_option_previous_close(ticker, exp_date, op_type, strike)
+
+                if not center_df.empty:
+                    ref_date_obj = center_df.iloc[0]["Date"]
+                    ref_date_str = ref_date_obj.strftime("%Y-%m-%d")
+                    row = center_df.iloc[0]
+                    
+                    # Store Option Data
+                    st.session_state["center_data"] = {
+                        "Strike": strike,
+                        "Date": row["Date"],
+                        "Open": row["Open"],
+                        "High": row["High"],
+                        "Low": row["Low"],
+                        "Close": row["Close"],
+                        "Volume": row["Volume"],
+                        "IV": None,
+                        "IV_Error": "Waiting for Underlying",
+                        "TimeToExp": 0.0
+                    }
+                    st.session_state["market_mode"] = "Previous Day"
+                    
+                    # Try loading Underlying
+                    S_real, hv_real, err_s = get_stock_history_vol(ticker, ref_date_str)
+                    
+                    if S_real:
+                        st.session_state["underlying_S"] = S_real
+                        st.session_state["underlying_HV"] = hv_real
+                        
+                        # Calc Center IV
+                        time_to_exp = (pd.to_datetime(exp_date) - row["Date"]).days / 365.0
+                        if time_to_exp < 0.001: time_to_exp = 0.001
+
+                        iv_c, iv_err_c = implied_volatility(row["Close"], S_real, strike, time_to_exp, 0.05, op_type)
+                        st.session_state["center_data"]["IV"] = iv_c
+                        st.session_state["center_data"]["IV_Error"] = iv_err_c
+                        st.session_state["center_data"]["TimeToExp"] = time_to_exp
+                        
+                        st.success("Option Data Loaded!")
+                    else:
+                        st.warning(f"Option Data Loaded, but Underlying failed: {err_s}")
+                        st.session_state.pop("underlying_S", None)
+                        st.session_state["center_data"]["IV_Error"] = f"Underlying Missing: {err_s}"
+                else:
+                    st.error(f"Center Strike Option Data Error: {err_msg}")
+
+    with col_input:
+        # Step 2: Generate Smile
+        if st.session_state.get("market_mode") == "Previous Day" and "center_data" in st.session_state:
+            st.divider()
+            if st.button("Generate Volatility Smile", key="smile_gen"):
+                with st.spinner("Fetching neighbor strikes..."):
+                    center = st.session_state["center_data"]
+                    S_real = st.session_state["underlying_S"]
+                    
+                    # Strikes to fetch: [-10, +10]
+                    strikes_to_fetch = [
+                        center["Strike"] - 10, 
+                        center["Strike"] - 5, 
+                        center["Strike"] + 5, 
+                        center["Strike"] + 10
+                    ]
+                    
+                    smile_rows = []
+                    # Helper for moneyness (Log Moneyness)
+                    def calc_moneyness(S, K):
+                        return np.log(K / S)
+
+                    # Add Center
+                    smile_rows.append({
+                        "Strike": center["Strike"], 
+                        "IV": center["IV"], 
+                        "Price": center["Close"], 
+                        "Moneyness": calc_moneyness(S_real, center["Strike"])
+                    })
+                    
+                    for k_i in strikes_to_fetch:
+                        df_i, err_i, _ = get_option_previous_close(ticker, exp_date, op_type, k_i)
+                        
+                        if not df_i.empty:
+                            row_i = df_i.iloc[0]
+                            # Reuse T from center (approx same day)
+                            # print("DEBUG","S", S_real,"K", k_i, "price", row_i["Close"],"T", center["TimeToExp"])
+                            iv_i, iv_err_i = implied_volatility(
+                                row_i["Close"], 
+                                S_real, 
+                                k_i, 
+                                center["TimeToExp"], 
+                                0.05, 
+                                op_type
+                            )
+                            # if iv_i is None: ... (handled internally now)
+                            smile_rows.append({
+                                "Strike": k_i, 
+                                "IV": iv_i, 
+                                "Price": row_i["Close"], 
+                                "Moneyness": calc_moneyness(S_real, k_i)
+                            })
+                    
+                    st.session_state["smile_data"] = pd.DataFrame(smile_rows).sort_values("Strike")
+                    st.success("Smile Generated!")
+
+    with col_view:
+        if st.session_state.get("market_mode") == "Previous Day" and "center_data" in st.session_state:
+            center = st.session_state["center_data"]
+            
+            # --- LINE 1: Option OHLCV ---
+            st.markdown("### 1. Option OHLCV Data")
+            texp = center.get("TimeToExp", 0.0)
+            date_str = center['Date'].strftime('%Y-%m-%d')
+            st.caption(f"Date: {date_str} | Time to Exp: {texp:.4f}y")
+            
+            ohlc_cols = st.columns(5)
+            ohlc_cols[0].metric("Open", f"${center['Open']:.2f}")
+            ohlc_cols[1].metric("High", f"${center['High']:.2f}")
+            ohlc_cols[2].metric("Low", f"${center['Low']:.2f}")
+            ohlc_cols[3].metric("Close", f"${center['Close']:.2f}")
+            ohlc_cols[4].metric("Volume", f"{center['Volume']:,}")
+            
+            # --- LINE 2: Underlying ---
+            st.markdown("### 2. Underlying Asset")
+            if "underlying_S" in st.session_state:
+                udata = st.columns(2)
+                udata[0].metric("Underlying Price", f"${st.session_state.get('underlying_S', 0):.2f}")
+                udata[1].metric("Historical Volatility (1Y)", f"{st.session_state.get('underlying_HV',0)*100:.2f}%")
+            else:
+                 st.warning("Underlying Data Not Available")
+            
+            # --- LINE 3: Implied Volatility ---
+            st.markdown("### 3. Implied Volatility")
+            if center.get('IV_Error'):
+                st.error(f"IV Calculation Failed: {center['IV_Error']}")
+            else:
+                st.metric("Implied Volatility", f"{center['IV']:.2%}" if center['IV'] else "N/A")
+            
+            # Below this: Smile Section
+            if "smile_data" in st.session_state:
+                df_smile = st.session_state["smile_data"]
+                
+                # Filter out invalid IVs
+                df_smile = df_smile.replace([np.inf, -np.inf], np.nan).dropna(subset=["IV"])
+                
+                if not df_smile.empty:
+                    st.subheader("Volatility Smile")
+                    
+                    use_moneyness = st.checkbox("change x axis to log moneyness", value=False)
+                    
+                    x_col = "Moneyness" if use_moneyness else "Strike"
+                    x_label = "Log Moneyness ( log of (K/S) )" if use_moneyness else "Strike"
+                    
+                    x_vals = df_smile[x_col].values
+                    y_vals = df_smile["IV"].values
+                    
+                    # Calculate Target X (Underlying)
+                    S_spot = st.session_state.get('underlying_S', center["Strike"])
+                    # If using Log Moneyness, ATM is ln(K/S) where K=S => ln(1) = 0
+                    target_x = S_spot if not use_moneyness else 0.0
+                    
+                    # Check Bounds
+                    min_k = df_smile["Strike"].min()
+                    max_k = df_smile["Strike"].max()
+                    if S_spot < min_k or S_spot > max_k:
+                         st.warning("Spot price not within smile bounds, data may be wrong")
+                    
+                    # Interpolate IV at Spot
+                    iv_at_spot = interpolate_volatility(x_vals, y_vals, target_x)
+                    
+                    if iv_at_spot:
+                        st.caption(f"**Interpolated IV at Spot:** {iv_at_spot:.2%}")
+
+                    # Smoothing
+                    if len(x_vals) >= 4:
+                         from scipy.interpolate import make_interp_spline
+                         try:
+                             X_Y_Spline = make_interp_spline(x_vals, y_vals)
+                             X_smooth = np.linspace(x_vals.min(), x_vals.max(), 50)
+                             Y_smooth = X_Y_Spline(X_smooth)
+                         except:
+                             X_smooth, Y_smooth = x_vals, y_vals
+                    else:
+                        X_smooth, Y_smooth = x_vals, y_vals
+                        
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(x=X_smooth, y=Y_smooth, mode='lines', name='Smile', line=dict(shape='spline', color='#00CC96')))
+                    fig.add_trace(go.Scatter(x=x_vals, y=y_vals, mode='markers', name='Data', marker=dict(size=8, color='#EF553B')))
+                    
+                    # Add Vertical Line for Underlying
+                    fig.add_vline(
+                        x=target_x, 
+                        line_width=2, 
+                        line_dash="dot", 
+                        line_color="red", 
+                        annotation_text="Underlying", 
+                        annotation_position="top right"
+                    )
+                    
+                    fig.update_layout(title=f"IV vs {x_label}", xaxis_title=x_label, yaxis_title="Implied Volatility", template="plotly_dark")
+                    st.plotly_chart(fig, width="stretch")
+            else:
+                st.info("Click 'Generate Volatility Smile' to fetch neighbor strikes.")
+        else:
+             st.info("Select parameters and click Fetch Data.")
+
+# --- TAB 6: Volatility Surface ---
+with tabs[4]:
+    # st.header("Volatility Surface (Custom Timeframe)")
+    
+    col_s_input, col_s_view = st.columns([1, 2])
+    
+    with col_s_input:
+        st.subheader("Market Parameters")
+        ticker = st.text_input("Ticker", value="AAPL", key="surf_ticker").upper()
+        
+        c_exp1, c_exp2 = st.columns(2)
+        exp_date = c_exp1.date_input("Expiration", value=datetime.now() + timedelta(days=30), key="surf_exp")
+        op_type = c_exp2.selectbox("Type", ["C", "P"], key="surf_op_type")
+        
+        strike = st.number_input("Central Strike", value=275.0, step=1.0, key="surf_strike")
+        
+        st.divider()
+        st.subheader("Data Fetching")
+        
+        # Date Selection
+        c_d1, c_d2 = st.columns(2)
+        today = datetime.now().date()
+        max_end_date = today - timedelta(days=1)
+        
+        end_date = c_d2.date_input("End Date", value=max_end_date, max_value=max_end_date, key="surf_end_date")
+        start_date = c_d1.date_input("Start Date", value=end_date - timedelta(days=10), max_value=end_date - timedelta(days=1), key="surf_start_date")
+        
+        if start_date >= end_date:
+            st.error("Start Date must be before End Date.")
+        
+        if st.button("Fetch Data", key="surf_fetch", disabled=(start_date >= end_date)):
+            # Clear conflicting smile data AND previous surface plots
+            if "center_data" in st.session_state: del st.session_state["center_data"]
+            if "smile_data" in st.session_state: del st.session_state["smile_data"]
+            if "surface_data" in st.session_state: del st.session_state["surface_data"]
+            
+            with st.spinner("Fetching data from Massive (Multi-Strike)..."):
+                
+                # Strikes Scope: Center and Neighbors
+                strikes_to_fetch = [strike - 10, strike - 5, strike, strike + 5, strike + 10]
+                
+                # 1. Fetch Underlying ONCE for the range
+                u_data, u_err = get_underlying_history_range(
+                    ticker, 
+                    start_date.strftime("%Y-%m-%d"), 
+                    end_date.strftime("%Y-%m-%d")
+                )
+                
+                if u_data:
+                    all_surface_data = []
+                    
+                    progress_bar = st.progress(0, text="Fetching Strikes...")
+                    
+                    for idx, k_curr in enumerate(strikes_to_fetch):
+                         progress_bar.progress((idx + 1) / len(strikes_to_fetch), text=f"Fetching Strike {k_curr}...")
+                         
+                         df_data, error_msg = get_option_aggregates(
+                            ticker, 
+                            exp_date, 
+                            op_type, 
+                            k_curr, 
+                            start_date.strftime("%Y-%m-%d"), 
+                            end_date.strftime("%Y-%m-%d"),
+                            limit=200 # increased limit for longer ranges
+                        )
+                         
+                         if not df_data.empty:
+                             for _, row in df_data.iterrows():
+                                 d_date = row["Date"].date()
+                                 if d_date in u_data:
+                                     S_t = u_data[d_date]
+                                     T_t = (pd.to_datetime(exp_date).date() - d_date).days / 365.0
+                                     if T_t < 0.001: T_t = 0.001
+                                     
+                                     iv_t, iv_err_t = implied_volatility(row["Close"], S_t, k_curr, T_t, 0.05, op_type)
+                                     
+                                     if iv_t is not None:
+                                         all_surface_data.append({
+                                             "Date": row["Date"],
+                                             "Underlying": S_t,
+                                             "OptionPrice": row["Close"],
+                                             "Strike": k_curr,
+                                             "Moneyness": np.log(k_curr / S_t), 
+                                             "IV": iv_t
+                                         })
+                    
+                    progress_bar.empty()
+                    
+                    if all_surface_data:
+                        st.session_state["custom_data_table"] = pd.DataFrame(all_surface_data) # Stores full dataset
+                        st.session_state["market_mode"] = "Custom Timeframe"
+                        st.success(f"Loaded {len(all_surface_data)} data points across {len(strikes_to_fetch)} strikes!")
+                    else:
+                        st.warning("No valid overlapping data found for these strikes.")
+                else:
+                    st.error(f"Underlying fetch error: {u_err}")
+
+    with col_s_input:
+        if st.session_state.get("market_mode") == "Custom Timeframe" and "custom_data_table" in st.session_state:
+             st.divider()
+             if st.button("Generate Volatility Surface", key="surf_gen"):
+                 st.session_state["surface_data"] = st.session_state["custom_data_table"]
+                 
+    with col_s_view:
+        if st.session_state.get("market_mode") == "Custom Timeframe":
+            # State 1: Table (Just Central Strike for clarity, or summary?)
+            if "custom_data_table" in st.session_state:
+                df_all = st.session_state["custom_data_table"]
+                
+                # Filter for Central Strike for the table View
+                center_val = strike
+                df_table = df_all[df_all["Strike"] == center_val].sort_values("Date")
+                
+                if df_table.empty:
+                    st.info(f"No data for central strike {center_val}, showing all.")
+                    df_table = df_all.head(50)
+                
+                d_min = df_all["Date"].min().strftime("%Y-%m-%d")
+                d_max = df_all["Date"].max().strftime("%Y-%m-%d")
+                
+                st.subheader(f"Historical Data ({d_min} to {d_max})")
+                st.caption(f"Showing data for Center Strike: {center_val}")
+                
+                st.dataframe(
+                    df_table[["Date", "Underlying", "OptionPrice", "Moneyness", "IV"]].style.format({
+                        "Underlying": "{:.2f}",
+                        "OptionPrice": "{:.2f}",
+                        "Moneyness": "{:.4f}",
+                        "IV": "{:.2%}"
+                    }), 
+                    width="stretch"
+                )
+            
+            # State 2: Surface Plot (if generated)
+            if "surface_data" in st.session_state:
+                df_surf = st.session_state["surface_data"]
+                
+                st.divider()
+                st.subheader("Implied Volatility Surface")
+                
+                # --- Advanced Surface: TTE vs Moneyness vs IV ---
+                try:
+                    # 1. Prepare Data
+                    # Calculate Time To Expiration (Years)
+                    df_surf['DateObj'] = pd.to_datetime(df_surf['Date'])
+                    exp_date_obj = pd.to_datetime(exp_date)
+                    df_surf['TimeToExp'] = (exp_date_obj - df_surf['DateObj']).dt.days / 365.0
+                    
+                    # Ensure Moneyness is present (it should be)
+                    # Moneyness = Strike / Underlying
+                    
+                    # 2. Create Regular Grid for Surfaces
+                    # Since Moneyness varies per day for fixed strikes, we must interpolate onto a fixed Moneyness grid.
+                    
+                    # Define Grid Ranges
+                    min_mon = df_surf["Moneyness"].min()
+                    max_mon = df_surf["Moneyness"].max()
+                    # Add buffer for visuals
+                    grid_moneyness = np.linspace(min_mon * 0.98, max_mon * 1.02, 30) 
+                    
+                    # Get Unique TimeToExp (sorted descending for Right->Left flow? No, standard axis is fine)
+                    # User: "Date progressing from start to end from right to left"
+                    # Start Date = High TTE. End Date = Low TTE.
+                    # Standard Axis: Low(Left) -> High(Right).
+                    # So TTE axis naturally puts End Date(Low) on Left and Start Date(High) on Right.
+                    unique_tte = sorted(df_surf['TimeToExp'].unique())
+                    
+                    z_data = [] # Rows = TTE, Cols = Moneyness
+                    
+                    from scipy.interpolate import interp1d
+                    
+                    for t in unique_tte:
+                        # Get data for this specific time slice
+                        df_slice = df_surf[df_surf['TimeToExp'] == t]
+                        
+                        if len(df_slice) < 2:
+                            # Not enough points to interpolate, fill with NaNs or nearest
+                            row_iv = [np.nan] * len(grid_moneyness)
+                        else:
+                            # Interpolate IV vs Moneyness for this day
+                            f_interp = interp1d(
+                                df_slice["Moneyness"], 
+                                df_slice["IV"], 
+                                kind='linear', 
+                                bounds_error=False, 
+                                fill_value="extrapolate" 
+                            )
+                            row_iv = f_interp(grid_moneyness)
+                            
+                        z_data.append(row_iv)
+                    
+                    z_matrix = np.array(z_data)
+                    
+                    # 3. Plot
+                    # X = Moneyness Grid (Left -> Right)
+                    # Y = TTE (Left=Low=End, Right=High=Start)
+                    
+                    fig = go.Figure(data=[go.Surface(
+                        z=z_matrix,
+                        x=grid_moneyness,
+                        y=unique_tte,
+                        colorscale='Viridis',
+                        opacity=0.9,
+                        contours_z=dict(show=True, usecolormap=True, highlightcolor="limegreen", project_z=True)
+                    )])
+                    
+                    fig.update_layout(
+                        title=f"IV Surface (Moneyness vs TTE)",
+                        scene=dict(
+                            xaxis=dict(title='Log Moneyness ( log of (K/S) )', autotypenumbers="strict"),
+                            yaxis=dict(title='Time to Expiration (Years)', autotypenumbers="strict"),
+                            zaxis=dict(title='Implied Volatility', autotypenumbers="strict"),
+                            camera=dict(eye=dict(x=1.5, y=-1.5, z=0.5)),
+                            aspectratio=dict(x=1, y=1, z=1)
+                        ),
+                        template="plotly_dark",
+                        margin=dict(l=0, r=0, b=0, t=40),
+                        height=700
+                    )
+                    
+                    st.plotly_chart(fig, width="stretch")
+                    
+                except Exception as e:
+                    st.error(f"Error creating surface plot: {e}")
+                    import traceback
+                    st.text(traceback.format_exc())
+                    st.write("Raw Data Head:", df_surf.head())
+        else:
+             st.info("Select parameters and click Fetch Data.")
