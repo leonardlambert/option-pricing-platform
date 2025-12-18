@@ -47,33 +47,55 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# API Key Management
+# Data Source & API Key Management
 with st.sidebar:
     st.subheader("App settings")
     
-    # API Key Management
-    st.subheader("Massive / Polygon API key")
-    user_key = st.text_input("Enter API Key", type="password", help="Enter your Massive API key here to override the default one.")
+    # 1. Data Source Selection
+    current_mode = st.session_state.get("data_mode", "Live API")
+    new_mode = st.radio(
+        "Data Source",
+        ["Live API", "Preloaded Dataset"],
+        index=0 if current_mode == "Live API" else 1,
+        help="Switch between live market data and offline preloaded dataset."
+    )
     
-    if st.button("Validate & Apply Key"):
-        if not user_key:
-            st.error("Please enter a key.")
+    if new_mode != current_mode:
+        st.session_state["data_mode"] = new_mode
+        # Clear data on switch
+        for k in ["center_data", "smile_data", "surface_data", "custom_data_table", "market_mode", "underlying_S", "underlying_HV"]:
+            if k in st.session_state: del st.session_state[k]
+        st.rerun()
+    
+    st.divider()
+    
+    # 2. API Key Management (only if Live API is selected)
+    if st.session_state["data_mode"] == "Live API":
+        st.subheader("Massive / Polygon API key")
+        user_key = st.text_input("Enter API Key", type="password", help="Enter your Massive API key here to override the default one.")
+        
+        if st.button("Validate & Apply Key"):
+            if not user_key:
+                st.error("Please enter a key.")
+            else:
+                with st.spinner("Validating..."):
+                    is_valid, msg = validate_api_key(user_key)
+                    if is_valid:
+                        st.session_state["user_api_key"] = user_key
+                        st.success("API Key validated and applied!")
+                    else:
+                        st.error(msg)
+        
+        if "user_api_key" in st.session_state:
+            st.info("Currently using: **Custom API Key**")
+            if st.button("Reset to Default Key"):
+                del st.session_state["user_api_key"]
+                st.rerun()
         else:
-            with st.spinner("Validating..."):
-                is_valid, msg = validate_api_key(user_key)
-                if is_valid:
-                    st.session_state["user_api_key"] = user_key
-                    st.success("API Key validated and applied!")
-                else:
-                    st.error(msg)
-    
-    if "user_api_key" in st.session_state:
-        st.info("Currently using: **Custom API Key**")
-        if st.button("Reset to Default Key"):
-            del st.session_state["user_api_key"]
-            st.rerun()
+            st.caption("Currently using: Preloaded Dataset")
     else:
-        st.caption("Currently using: Preloaded Dataset")
+        st.info("Currently using: **Preloaded Dataset**")
+        st.caption("No API key required in this mode.")
 
 # Apply Light Theme CSS (Default)
 st.markdown("""
@@ -594,73 +616,149 @@ with tabs[4]:
     
     with col_input:
         st.subheader("Market Parameters")
-        ticker = st.text_input("Ticker", value="AAPL", key="smile_ticker").upper()
-        
-        c_exp1, c_exp2 = st.columns(2)
-        exp_date = c_exp1.date_input("Expiration", value=datetime.now() + timedelta(days=30), key="smile_exp")
-        op_type = c_exp2.selectbox("Type", ["C", "P"], key="smile_op_type")
-        
-        strike = st.number_input("Central Strike", value=275.0, step=1.0, key="smile_strike")
+        if st.session_state.get("data_mode") == "Preloaded Dataset":
+            ticker = st.selectbox("Ticker", ["AAPL", "NVDA", "SPY"], key="smile_ticker").upper()
+            
+            c_exp1, c_exp2 = st.columns(2)
+            # Locked Expiration
+            exp_date = c_exp1.date_input("Expiration", value=datetime(2026, 2, 20), disabled=True, key="smile_exp")
+            op_type = c_exp2.selectbox("Type", ["C", "P"], key="smile_op_type")
+            
+            # Locked Central Strike based on Ticker
+            strike_map = {"NVDA": 170.0, "AAPL": 270.0, "SPY": 670.0}
+            default_strike = strike_map.get(ticker, 100.0)
+            # Use a reactive value for display
+            st.number_input("Central Strike", value=default_strike, disabled=True, step=1.0, key=f"smile_strike_disp_{ticker}")
+            strike = default_strike # Internal variable for logic
+        else:
+            ticker = st.text_input("Ticker", value="AAPL", key="smile_ticker").upper()
+            
+            c_exp1, c_exp2 = st.columns(2)
+            exp_date = c_exp1.date_input("Expiration", value=datetime.now() + timedelta(days=30), key="smile_exp")
+            op_type = c_exp2.selectbox("Type", ["C", "P"], key="smile_op_type")
+            
+            strike = st.number_input("Central Strike", value=275.0, step=1.0, key="smile_strike")
 
         st.divider()
-        st.subheader("Data Fetching")
         
-        if st.button("Fetch Data", key="smile_fetch"):
-            # Clear conflicting surface data if any
-            if "surface_data" in st.session_state: del st.session_state["surface_data"]
-            if "custom_data_table" in st.session_state: del st.session_state["custom_data_table"]
+        if st.session_state.get("data_mode") == "Live API":
+            st.subheader("Data Fetching")
+            if st.button("Fetch Data", key="smile_fetch"):
+                # Clear conflicting surface data if any
+                if "surface_data" in st.session_state: del st.session_state["surface_data"]
+                if "custom_data_table" in st.session_state: del st.session_state["custom_data_table"]
+                
+                with st.spinner("Fetching data from Massive..."):
+                    # --- STEP 1: Central Strike Only ---
+                    center_df, err_msg, contract_symbol = get_option_previous_close(ticker, exp_date, op_type, strike)
+    
+                    if not center_df.empty:
+                        ref_date_obj = center_df.iloc[0]["Date"]
+                        ref_date_str = ref_date_obj.strftime("%Y-%m-%d")
+                        row = center_df.iloc[0]
+                        
+                        # Store Option Data
+                        st.session_state["center_data"] = {
+                            "Strike": strike,
+                            "Date": row["Date"],
+                            "Open": row["Open"],
+                            "High": row["High"],
+                            "Low": row["Low"],
+                            "Close": row["Close"],
+                            "Volume": row["Volume"],
+                            "IV": None,
+                            "IV_Error": "Waiting for Underlying",
+                            "TimeToExp": 0.0
+                        }
+                        st.session_state["market_mode"] = "Previous Day"
+                        
+                        # Try loading Underlying
+                        S_real, hv_real, err_s = get_stock_history_vol(ticker, ref_date_str)
+                        
+                        if S_real:
+                            st.session_state["underlying_S"] = S_real
+                            st.session_state["underlying_HV"] = hv_real
+                            
+                            # Calc Center IV
+                            time_to_exp = (pd.to_datetime(exp_date) - row["Date"]).days / 365.0
+                            if time_to_exp < 0.001: time_to_exp = 0.001
+    
+                            iv_c, iv_err_c = implied_volatility(row["Close"], S_real, strike, time_to_exp, 0.05, op_type)
+                            st.session_state["center_data"]["IV"] = iv_c
+                            st.session_state["center_data"]["IV_Error"] = iv_err_c
+                            st.session_state["center_data"]["TimeToExp"] = time_to_exp
+                            
+                            st.success("Option Data Loaded!")
+                        else:
+                            st.warning(f"Option Data Loaded, but Underlying failed: {err_s}")
+                            st.session_state.pop("underlying_S", None)
+                            st.session_state["center_data"]["IV_Error"] = f"Underlying Missing: {err_s}"
+                    else:
+                        st.error(f"Center Strike Option Data Error: {err_msg}")
+        else:
+            st.subheader("Smile Generation")
+            # Analysis Date picker (Preloaded mode)
+            # Dates in preloaded: 2024-12-18 to 2025-12-17
+            analysis_date = st.date_input("Analysis Date", value=datetime(2025, 12, 17), min_value=datetime(2024, 12, 18), max_value=datetime(2025, 12, 17), key="smile_analysis_date")
             
-            with st.spinner("Fetching data from Massive..."):
-                # --- STEP 1: Central Strike Only ---
-                center_df, err_msg, contract_symbol = get_option_previous_close(ticker, exp_date, op_type, strike)
-
-                if not center_df.empty:
-                    ref_date_obj = center_df.iloc[0]["Date"]
-                    ref_date_str = ref_date_obj.strftime("%Y-%m-%d")
-                    row = center_df.iloc[0]
+            if st.button("Generate Smile", key="smile_gen_preloaded"):
+                # Clear conflicting surface data
+                if "surface_data" in st.session_state: del st.session_state["surface_data"]
+                if "custom_data_table" in st.session_state: del st.session_state["custom_data_table"]
+                
+                with st.spinner("Processing offline dataset..."):
+                    # Logic: Fetch center and neighbors for this specific date
+                    strikes_to_fetch = [strike - 20, strike - 10, strike - 5, strike, strike + 5, strike + 10, strike + 20]
+                    ref_date_str = analysis_date.strftime("%Y-%m-%d")
                     
-                    # Store Option Data
-                    st.session_state["center_data"] = {
-                        "Strike": strike,
-                        "Date": row["Date"],
-                        "Open": row["Open"],
-                        "High": row["High"],
-                        "Low": row["Low"],
-                        "Close": row["Close"],
-                        "Volume": row["Volume"],
-                        "IV": None,
-                        "IV_Error": "Waiting for Underlying",
-                        "TimeToExp": 0.0
-                    }
-                    st.session_state["market_mode"] = "Previous Day"
-                    
-                    # Try loading Underlying
+                    # 1. Fetch Underlying for this date
                     S_real, hv_real, err_s = get_stock_history_vol(ticker, ref_date_str)
                     
                     if S_real:
                         st.session_state["underlying_S"] = S_real
                         st.session_state["underlying_HV"] = hv_real
                         
-                        # Calc Center IV
-                        time_to_exp = (pd.to_datetime(exp_date) - row["Date"]).days / 365.0
-                        if time_to_exp < 0.001: time_to_exp = 0.001
-
-                        iv_c, iv_err_c = implied_volatility(row["Close"], S_real, strike, time_to_exp, 0.05, op_type)
-                        st.session_state["center_data"]["IV"] = iv_c
-                        st.session_state["center_data"]["IV_Error"] = iv_err_c
-                        st.session_state["center_data"]["TimeToExp"] = time_to_exp
+                        smile_rows = []
+                        center_data = None
                         
-                        st.success("Option Data Loaded!")
+                        time_to_exp = (pd.to_datetime(exp_date) - pd.to_datetime(analysis_date)).days / 365.0
+                        if time_to_exp < 0.001: time_to_exp = 0.001
+                        
+                        for k_i in strikes_to_fetch:
+                            df_i, err_i = get_option_aggregates(ticker, exp_date, op_type, k_i, ref_date_str, ref_date_str)
+                            
+                            if not df_i.empty:
+                                row_i = df_i.iloc[0]
+                                iv_i, iv_err_i = implied_volatility(row_i["Close"], S_real, k_i, time_to_exp, 0.05, op_type)
+                                
+                                row_dict = {
+                                    "Strike": k_i, 
+                                    "IV": iv_i, 
+                                    "Price": row_i["Close"], 
+                                    "Moneyness": np.log(k_i / S_real)
+                                }
+                                smile_rows.append(row_dict)
+                                
+                                if k_i == strike:
+                                    center_data = {
+                                        "Strike": k_i, "Date": row_i["Date"], "Open": row_i["Open"], "High": row_i["High"],
+                                        "Low": row_i["Low"], "Close": row_i["Close"], "Volume": row_i["Volume"],
+                                        "IV": iv_i, "IV_Error": iv_err_i, "TimeToExp": time_to_exp
+                                    }
+                        
+                        if smile_rows:
+                            st.session_state["smile_data"] = pd.DataFrame(smile_rows).sort_values("Strike")
+                            st.session_state["center_data"] = center_data
+                            st.session_state["market_mode"] = "Previous Day" # Reuse state to trigger plots
+                            st.success(f"Smile generated for {ref_date_str}!")
+                        else:
+                            st.error("No option data found for this date in preloaded set.")
                     else:
-                        st.warning(f"Option Data Loaded, but Underlying failed: {err_s}")
-                        st.session_state.pop("underlying_S", None)
-                        st.session_state["center_data"]["IV_Error"] = f"Underlying Missing: {err_s}"
-                else:
-                    st.error(f"Center Strike Option Data Error: {err_msg}")
+                        st.error(f"Underlying data missing for {ref_date_str}")
 
     with col_input:
-        # Step 2: Generate Smile
-        if st.session_state.get("market_mode") == "Previous Day" and "center_data" in st.session_state:
+        # Step 2: Generate Smile (Live Mode only, Preloaded does it in one go)
+        if st.session_state.get("data_mode") == "Live API" and st.session_state.get("market_mode") == "Previous Day" and "center_data" in st.session_state:
             st.divider()
             if st.button("Generate Volatility Smile", key="smile_gen"):
                 with st.spinner("Fetching neighbor strikes..."):
@@ -823,94 +921,165 @@ with tabs[5]:
     
     with col_s_input:
         st.subheader("Market Parameters")
-        ticker = st.text_input("Ticker", value="AAPL", key="surf_ticker").upper()
-        
-        c_exp1, c_exp2 = st.columns(2)
-        exp_date = c_exp1.date_input("Expiration", value=datetime.now() + timedelta(days=30), key="surf_exp")
-        op_type = c_exp2.selectbox("Type", ["C", "P"], key="surf_op_type")
-        
-        strike = st.number_input("Central Strike", value=275.0, step=1.0, key="surf_strike")
-        
-        st.divider()
-        st.subheader("Data Fetching")
-        
-        # Date Selection
-        c_d1, c_d2 = st.columns(2)
-        today = datetime.now().date()
-        max_end_date = today - timedelta(days=1)
-        
-        end_date = c_d2.date_input("End Date", value=max_end_date, max_value=max_end_date, key="surf_end_date")
-        start_date = c_d1.date_input("Start Date", value=end_date - timedelta(days=10), max_value=end_date - timedelta(days=1), key="surf_start_date")
-        
-        if start_date >= end_date:
-            st.error("Start Date must be before End Date.")
-        
-        if st.button("Fetch Data", key="surf_fetch", disabled=(start_date >= end_date)):
-            # Clear conflicting smile data AND previous surface plots
-            if "center_data" in st.session_state: del st.session_state["center_data"]
-            if "smile_data" in st.session_state: del st.session_state["smile_data"]
-            if "surface_data" in st.session_state: del st.session_state["surface_data"]
+        if st.session_state.get("data_mode") == "Preloaded Dataset":
+            ticker = st.selectbox("Ticker", ["AAPL", "NVDA", "SPY"], key="surf_ticker").upper()
             
-            with st.spinner("Fetching data from Massive (Multi-Strike)..."):
+            c_exp1, c_exp2 = st.columns(2)
+            # Locked Expiration
+            exp_date = c_exp1.date_input("Expiration", value=datetime(2026, 2, 20), disabled=True, key="surf_exp")
+            op_type = c_exp2.selectbox("Type", ["C", "P"], key="surf_op_type")
+            
+            # Locked Central Strike based on Ticker
+            strike_map = {"NVDA": 170.0, "AAPL": 270.0, "SPY": 670.0}
+            default_strike = strike_map.get(ticker, 100.0)
+            st.number_input("Central Strike", value=default_strike, disabled=True, step=1.0, key=f"surf_strike_disp_{ticker}")
+            strike = default_strike
+        else:
+            ticker = st.text_input("Ticker", value="AAPL", key="surf_ticker").upper()
+            
+            c_exp1, c_exp2 = st.columns(2)
+            exp_date = c_exp1.date_input("Expiration", value=datetime.now() + timedelta(days=30), key="surf_exp")
+            op_type = c_exp2.selectbox("Type", ["C", "P"], key="surf_op_type")
+            
+            strike = st.number_input("Central Strike", value=275.0, step=1.0, key="surf_strike")
+        
+        if st.session_state.get("data_mode") == "Live API":
+            st.divider()
+            st.subheader("Data Fetching")
+            
+            # Date Selection
+            c_d1, c_d2 = st.columns(2)
+            today = datetime.now().date()
+            max_end_date = today - timedelta(days=1)
+            
+            end_date = c_d2.date_input("End Date", value=max_end_date, max_value=max_end_date, key="surf_end_date")
+            start_date = c_d1.date_input("Start Date", value=end_date - timedelta(days=10), max_value=end_date - timedelta(days=1), key="surf_start_date")
+            
+            if start_date >= end_date:
+                st.error("Start Date must be before End Date.")
+            
+            if st.button("Fetch Data", key="surf_fetch", disabled=(start_date >= end_date)):
+                # Clear conflicting smile data AND previous surface plots
+                if "center_data" in st.session_state: del st.session_state["center_data"]
+                if "smile_data" in st.session_state: del st.session_state["smile_data"]
+                if "surface_data" in st.session_state: del st.session_state["surface_data"]
                 
-                # Strikes Scope: Center and Neighbors
-                strikes_to_fetch = [strike - 10, strike - 5, strike, strike + 5, strike + 10]
-                
-                # 1. Fetch Underlying ONCE for the range
-                u_data, u_err = get_underlying_history_range(
-                    ticker, 
-                    start_date.strftime("%Y-%m-%d"), 
-                    end_date.strftime("%Y-%m-%d")
-                )
-                
-                if u_data:
-                    all_surface_data = []
+                with st.spinner("Fetching data from Massive (Multi-Strike)..."):
                     
-                    progress_bar = st.progress(0, text="Fetching Strikes...")
+                    # Strikes Scope: Center and Neighbors
+                    strikes_to_fetch = [strike - 10, strike - 5, strike, strike + 5, strike + 10]
                     
-                    for idx, k_curr in enumerate(strikes_to_fetch):
-                         progress_bar.progress((idx + 1) / len(strikes_to_fetch), text=f"Fetching Strike {k_curr}...")
-                         
-                         df_data, error_msg = get_option_aggregates(
-                            ticker, 
-                            exp_date, 
-                            op_type, 
-                            k_curr, 
-                            start_date.strftime("%Y-%m-%d"), 
-                            end_date.strftime("%Y-%m-%d"),
-                            limit=200 # increased limit for longer ranges
-                        )
-                         
-                         if not df_data.empty:
-                             for _, row in df_data.iterrows():
-                                 d_date = row["Date"].date()
-                                 if d_date in u_data:
-                                     S_t = u_data[d_date]
-                                     T_t = (pd.to_datetime(exp_date).date() - d_date).days / 365.0
-                                     if T_t < 0.001: T_t = 0.001
-                                     
-                                     iv_t, iv_err_t = implied_volatility(row["Close"], S_t, k_curr, T_t, 0.05, op_type)
-                                     
-                                     if iv_t is not None:
-                                         all_surface_data.append({
-                                             "Date": row["Date"],
-                                             "Underlying": S_t,
-                                             "OptionPrice": row["Close"],
-                                             "Strike": k_curr,
-                                             "Moneyness": np.log(k_curr / S_t), 
-                                             "IV": iv_t
-                                         })
+                    # 1. Fetch Underlying ONCE for the range
+                    u_data, u_err = get_underlying_history_range(
+                        ticker, 
+                        start_date.strftime("%Y-%m-%d"), 
+                        end_date.strftime("%Y-%m-%d")
+                    )
                     
-                    progress_bar.empty()
-                    
-                    if all_surface_data:
-                        st.session_state["custom_data_table"] = pd.DataFrame(all_surface_data) # Stores full dataset
-                        st.session_state["market_mode"] = "Custom Timeframe"
-                        st.success(f"Loaded {len(all_surface_data)} data points across {len(strikes_to_fetch)} strikes!")
+                    if u_data:
+                        all_surface_data = []
+                        
+                        progress_bar = st.progress(0, text="Fetching Strikes...")
+                        
+                        for idx, k_curr in enumerate(strikes_to_fetch):
+                             progress_bar.progress((idx + 1) / len(strikes_to_fetch), text=f"Fetching Strike {k_curr}...")
+                             
+                             df_data, error_msg = get_option_aggregates(
+                                ticker, 
+                                exp_date, 
+                                op_type, 
+                                k_curr, 
+                                start_date.strftime("%Y-%m-%d"), 
+                                end_date.strftime("%Y-%m-%d"),
+                                limit=200 # increased limit for longer ranges
+                            )
+                             
+                             if not df_data.empty:
+                                 for _, row in df_data.iterrows():
+                                     d_date = row["Date"].date()
+                                     if d_date in u_data:
+                                         S_t = u_data[d_date]
+                                         T_t = (pd.to_datetime(exp_date).date() - d_date).days / 365.0
+                                         if T_t < 0.001: T_t = 0.001
+                                         
+                                         iv_t, iv_err_t = implied_volatility(row["Close"], S_t, k_curr, T_t, 0.05, op_type)
+                                         
+                                         if iv_t is not None:
+                                             all_surface_data.append({
+                                                 "Date": row["Date"],
+                                                 "Underlying": S_t,
+                                                 "OptionPrice": row["Close"],
+                                                 "Strike": k_curr,
+                                                 "Moneyness": np.log(k_curr / S_t), 
+                                                 "IV": iv_t
+                                             })
+                        
+                        progress_bar.empty()
+                        
+                        if all_surface_data:
+                            st.session_state["custom_data_table"] = pd.DataFrame(all_surface_data) # Stores full dataset
+                            st.session_state["market_mode"] = "Custom Timeframe"
+                            st.success(f"Loaded {len(all_surface_data)} data points across {len(strikes_to_fetch)} strikes!")
+                        else:
+                            st.warning("No valid overlapping data found for these strikes.")
                     else:
-                        st.warning("No valid overlapping data found for these strikes.")
-                else:
-                    st.error(f"Underlying fetch error: {u_err}")
+                        st.error(f"Underlying fetch error: {u_err}")
+        else:
+            st.divider()
+            st.subheader("Surface Generation")
+            
+            c_d1, c_d2 = st.columns(2)
+            # Default to last 30 days of dataset
+            end_date_default = datetime(2025, 12, 17)
+            start_date_default = end_date_default - timedelta(days=15)
+            
+            surf_end_date = c_d2.date_input("End Date", value=end_date_default, min_value=datetime(2024, 12, 18), max_value=datetime(2025, 12, 17), key="surf_analysis_end")
+            surf_start_date = c_d1.date_input("Start Date", value=start_date_default, min_value=datetime(2024, 12, 18), max_value=surf_end_date - timedelta(days=1), key="surf_analysis_start")
+            
+            if st.button("Generate Volatility Surface", key="surf_gen_preloaded"):
+                with st.spinner("Processing offline dataset..."):
+                    # Strikes to fetch
+                    strikes_to_fetch = [strike - 20, strike - 10, strike - 5, strike, strike + 5, strike + 10, strike + 20]
+                    
+                    # 1. Fetch Underlying Range
+                    u_data, u_err = get_underlying_history_range(
+                        ticker, 
+                        surf_start_date.strftime("%Y-%m-%d"), 
+                        surf_end_date.strftime("%Y-%m-%d")
+                    )
+                    
+                    if u_data:
+                        all_surface_data = []
+                        for k_curr in strikes_to_fetch:
+                            df_data, err_msg = get_option_aggregates(
+                                ticker, exp_date, op_type, k_curr, 
+                                surf_start_date.strftime("%Y-%m-%d"), 
+                                surf_end_date.strftime("%Y-%m-%d")
+                            )
+                            
+                            if not df_data.empty:
+                                for _, row in df_data.iterrows():
+                                    d_date = row["Date"].date()
+                                    if d_date in u_data:
+                                        S_t = u_data[d_date]
+                                        T_t = (pd.to_datetime(exp_date).date() - d_date).days / 365.0
+                                        if T_t < 0.001: T_t = 0.001
+                                        iv_t, iv_err_t = implied_volatility(row["Close"], S_t, k_curr, T_t, 0.05, op_type)
+                                        if iv_t is not None:
+                                            all_surface_data.append({
+                                                "Date": row["Date"], "Underlying": S_t, "OptionPrice": row["Close"],
+                                                "Strike": k_curr, "Moneyness": np.log(k_curr / S_t), "IV": iv_t
+                                            })
+                        
+                        if all_surface_data:
+                            st.session_state["custom_data_table"] = pd.DataFrame(all_surface_data)
+                            st.session_state["surface_data"] = st.session_state["custom_data_table"]
+                            st.session_state["market_mode"] = "Custom Timeframe"
+                            st.success(f"Surface generated with {len(all_surface_data)} points!")
+                        else:
+                            st.error("No overlap data found in range.")
+                    else:
+                        st.error(f"Underlying range error: {u_err}")
 
     with col_s_input:
         if st.session_state.get("market_mode") == "Custom Timeframe" and "custom_data_table" in st.session_state:
