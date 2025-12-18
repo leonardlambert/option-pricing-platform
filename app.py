@@ -6,15 +6,15 @@ import plotly.graph_objects as go
 
 # Local Imports
 from src.dashboard_utils import initialize_session_state, add_strategy_to_book, reset_book, delete_strategy, interpolate_volatility
-from pricing.pricing import black_scholes_price, compute_greeks, implied_volatility
+from pricing.pricing import black_scholes_price, compute_greeks, implied_volatility, calculate_pnl_attribution
 from pricing.FFT_pricer import fft_pricer
 from pricing.characteristic_functions import phi_bsm, phi_vg, phi_merton
 from src.visualizer import plot_spread_analysis, plot_simulation_results, plot_efficient_frontier
 from src.simulation import simulate_gbm_paths, simulate_vg_paths, simulate_mjd_paths
-from src.market_data import get_option_aggregates, get_option_previous_close, get_stock_history_vol, get_underlying_history_range
+from src.market_data import get_option_aggregates, get_option_previous_close, get_stock_history_vol, get_underlying_history_range, validate_api_key
 
 # Page Config
-st.set_page_config(page_title="Market Risk & Pricing Platform", layout="wide", page_icon="📈", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Option Pricing & Risk Management", layout="wide", page_icon="📈", initial_sidebar_state="collapsed")
 initialize_session_state()
 
 # Compact CSS & Theme Support
@@ -47,31 +47,65 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Theme Toggle
+# API Key Management
 with st.sidebar:
-    st.title("Settings")
-    theme = st.radio("Theme", ["Dark", "Light"], index=0)
+    st.subheader("App settings")
+    
+    # API Key Management
+    st.subheader("Massive / Polygon API key")
+    user_key = st.text_input("Enter API Key", type="password", help="Enter your Massive API key here to override the default one.")
+    
+    if st.button("Validate & Apply Key"):
+        if not user_key:
+            st.error("Please enter a key.")
+        else:
+            with st.spinner("Validating..."):
+                is_valid, msg = validate_api_key(user_key)
+                if is_valid:
+                    st.session_state["user_api_key"] = user_key
+                    st.success("API Key validated and applied!")
+                else:
+                    st.error(msg)
+    
+    if "user_api_key" in st.session_state:
+        st.info("Currently using: **Custom API Key**")
+        if st.button("Reset to Default Key"):
+            del st.session_state["user_api_key"]
+            st.rerun()
+    else:
+        st.caption("Currently using: Preloaded Dataset")
 
-if theme == "Light":
-    st.markdown("""
-        <style>
-            [data-testid="stAppViewContainer"] {
-                background-color: #ffffff;
-                color: #000000;
-            }
-            [data-testid="stSidebar"] {
-                background-color: #f0f2f6;
-            }
-            .stMarkdown, .stText, h1, h2, h3 {
-                color: #000000 !important;
-            }
-        </style>
-    """, unsafe_allow_html=True)
+# Apply Light Theme CSS (Default)
+st.markdown("""
+    <style>
+        .stApp {
+            background-color: white;
+            color: black;
+        }
+        [data-testid="stHeader"] {
+            background-color: white;
+        }
+        [data-testid="stSidebar"] {
+            background-color: #f8f9fa;
+        }
+        .stMarkdown, .stText, h1, h2, h3, h4, h5, h6, label, .stMetric {
+            color: black !important;
+        }
+        /* Metric labels specifically */
+        [data-testid="stMetricLabel"] {
+            color: #262730 !important;
+        }
+        .stButton>button {
+            color: black;
+            border-color: #ccc;
+        }
+    </style>
+""", unsafe_allow_html=True)
 
-st.title("Market Risk & Pricing Platform")
+st.title("Option Pricing & Risk Management")
 
 # Tabs
-tabs = st.tabs(["Pricing & Greeks", "Spread Visualizer", "PnL Visualization", "Volatility Smile", "Volatility Surface"])
+tabs = st.tabs(["Pricing & Greeks", "Spread Visualizer", "PnL Visualization", "Stress Test", "Volatility Smile", "Volatility Surface"])
 
 # --- TAB 1: Single Option Pricing ---
 with tabs[0]:
@@ -163,8 +197,26 @@ with tabs[1]:
         st.divider()
         strat_name = st.text_input("Strategy Name", value="My Strategy", placeholder="e.g. Iron Condor")
         if st.button("💾 Save Strategy to Book"):
-            add_strategy_to_book(S0_spread, T_spread, r_spread, sigma_spread, legs, name=strat_name)
-            st.success(f"Strategy '{strat_name}' saved!")
+            # Calculate and attach premiums to legs
+            save_legs = []
+            for leg in legs:
+                if pricing_model == "Black-Scholes":
+                    p = black_scholes_price(S0_spread, leg["strike"], T_spread, r_spread, sigma_spread, leg["type"])
+                elif pricing_model == "Variance Gamma":
+                    p = fft_pricer(leg["strike"], S0_spread, T_spread, r_spread, phi_vg, 
+                                    args=(sigma_spread, model_params["theta"], model_params["nu"]), 
+                                    call=(leg["type"]=="C"))
+                else:
+                    p = fft_pricer(leg["strike"], S0_spread, T_spread, r_spread, phi_merton, 
+                                    args=(sigma_spread, model_params["lamb"], model_params["mu_j"], model_params["sigma_j"]), 
+                                    call=(leg["type"]=="C"))
+                
+                leg_with_premium = leg.copy()
+                leg_with_premium["premium"] = round(p, 4)
+                save_legs.append(leg_with_premium)
+            
+            add_strategy_to_book(S0_spread, T_spread, r_spread, sigma_spread, save_legs, name=strat_name)
+            st.success(f"Strategy '{strat_name}' saved with leg premiums!")
 
     with col_plot:
         # Calculation
@@ -250,9 +302,16 @@ with tabs[2]:
     if not st.session_state.book:
         st.warning("Book is empty. Add strategies in 'Spread Visualizer' first.")
     else:
-        # Improved Table with Expanders
-        st.info(f"Total Strategies: {len(st.session_state.book)}")
+        # Selection state
+        if "selected_strategies" not in st.session_state:
+            st.session_state.selected_strategies = [True] * len(st.session_state.book)
         
+        # Adjust length if book was modified outside
+        if len(st.session_state.selected_strategies) != len(st.session_state.book):
+            st.session_state.selected_strategies = [True] * len(st.session_state.book)
+
+        st.info(f"Total Strategies: {len(st.session_state.book)}")
+
         entries_to_delete = []
         
         for idx, strat in enumerate(st.session_state.book):
@@ -261,7 +320,14 @@ with tabs[2]:
             params = f"S0={strat['S0']}, T={strat['T']}, r={strat['r']}, σ={strat['sigma']}"
             
             with st.expander(f"📍 **{name}** | 🕒 {timestamp}"):
-                c_details, c_action = st.columns([4, 1])
+                c_sel, c_details, c_action = st.columns([0.5, 3.5, 1])
+                with c_sel:
+                    current_sel = st.checkbox("Select Strategy", value=st.session_state.selected_strategies[idx], key=f"pnl_sel_{idx}_{strat['id']}", label_visibility="collapsed")
+                    if current_sel != st.session_state.selected_strategies[idx]:
+                        st.session_state.selected_strategies[idx] = current_sel
+                        if "pnl_results" in st.session_state:
+                            del st.session_state["pnl_results"]
+                        st.rerun()
                 with c_details:
                     st.write(f"**Parameters**: {params}")
                     # Leg Details
@@ -270,7 +336,8 @@ with tabs[2]:
                         pos_str = "Long (+1)" if leg["position"] == 1 else "Short (-1)"
                         type_str = leg["type"].title()
                         strike = leg["strike"]
-                        leg_data.append({"Position": pos_str, "Type": type_str, "Strike": strike})
+                        prem = leg.get("premium", 0.0)
+                        leg_data.append({"Position": pos_str, "Type": type_str, "Strike": strike, "Premium": prem})
                     st.table(pd.DataFrame(leg_data))
                 
                 with c_action:
@@ -278,71 +345,249 @@ with tabs[2]:
                         entries_to_delete.append(idx)
         
         if entries_to_delete:
-            # Delete in reverse order to avoid index shifting issues (though standard button rerun handles it usually, safe practice)
             for i in sorted(entries_to_delete, reverse=True):
                 delete_strategy(i)
+                # Remove from selection state too
+                if "selected_strategies" in st.session_state and len(st.session_state.selected_strategies) > i:
+                    st.session_state.selected_strategies.pop(i)
+            if "pnl_results" in st.session_state:
+                del st.session_state["pnl_results"]
             st.rerun()
 
         if st.button("🗑️ Clear Entire Book"):
             reset_book()
+            if "selected_strategies" in st.session_state:
+                st.session_state.selected_strategies = []
+            if "pnl_results" in st.session_state:
+                del st.session_state["pnl_results"]
             st.rerun()
             
         st.divider()
         # Simulation (only if book not empty after deletes)
         if st.session_state.book:
-            c_sim1, c_sim2 = st.columns(2)
-            with c_sim1:
-                n_paths = st.number_input("Paths", 1000, 50000, 5000)
-                steps = st.number_input("Steps", 10, 365, 50)
-                T_sim = st.number_input("Horizon (Years)", 0.1, 5.0, 1.0)
-            with c_sim2:
-                process = st.selectbox("Process", ["GBM", "Variance Gamma", "Merton Jump Diffusion"])
-                
-            if st.button("Run Monte Carlo"):
-                # Simulation logic ...
-                base_params = st.session_state.book[0]
-                S0_sim = base_params["S0"]
-                r_sim = base_params["r"]
-                sigma_sim = base_params["sigma"]
-                
-                with st.spinner("Simulating..."):
-                    if process == "GBM":
-                        paths = simulate_gbm_paths(S0_sim, r_sim, sigma_sim, T_sim, steps, n_paths)
-                    elif process == "Variance Gamma":
-                        paths = simulate_vg_paths(S0_sim, r_sim, sigma_sim, theta=-0.1, nu=0.2, T=T_sim, steps=steps, n_paths=n_paths)
-                    else:
-                        paths = simulate_mjd_paths(S0_sim, r_sim, sigma_sim, lamb=0.1, mu_j=-0.05, sigma_j=0.2, T=T_sim, steps=steps, n_paths=n_paths)
+            selected_indices = [i for i, sel in enumerate(st.session_state.selected_strategies) if sel]
+            
+            if not selected_indices:
+                st.warning("Please select at least one strategy to run simulation.")
+            else:
+                c_sim1, c_sim2 = st.columns(2)
+                with c_sim1:
+                    n_paths = st.number_input("Paths", 1000, 50000, 5000)
+                    steps = st.number_input("Steps", 10, 365, 50)
+                    T_sim = st.number_input("Horizon (Years)", 0.1, 5.0, 1.0)
+                with c_sim2:
+                    process = st.selectbox("Process", ["GBM", "Variance Gamma", "Merton Jump Diffusion"])
                     
-                    S_T = paths[:, -1]
-                    pnl = np.zeros(n_paths)
-                    initial_book_value = 0.0
-                    for strat in st.session_state.book:
-                        for leg in strat["legs"]:
-                            p = black_scholes_price(strat["S0"], leg["strike"], strat["T"], strat["r"], strat["sigma"], leg["type"])
-                            initial_book_value += leg["position"] * p
+                if st.button("Run Monte Carlo"):
+                    # Use the first selected strategy's parameters as base or default
+                    first_strat = st.session_state.book[selected_indices[0]]
+                    S0_sim = first_strat["S0"]
+                    r_sim = first_strat["r"]
+                    sigma_sim = first_strat["sigma"]
                     
-                    for i in range(n_paths):
-                        spot = S_T[i]
-                        val_t = 0.0
-                        for strat in st.session_state.book:
-                            remaining_t = max(0, strat["T"] - T_sim)
+                    with st.spinner("Simulating..."):
+                        if process == "GBM":
+                            paths = simulate_gbm_paths(S0_sim, r_sim, sigma_sim, T_sim, steps, n_paths)
+                        elif process == "Variance Gamma":
+                            paths = simulate_vg_paths(S0_sim, r_sim, sigma_sim, theta=-0.1, nu=0.2, T=T_sim, steps=steps, n_paths=n_paths)
+                        else:
+                            paths = simulate_mjd_paths(S0_sim, r_sim, sigma_sim, lamb=0.1, mu_j=-0.05, sigma_j=0.2, T=T_sim, steps=steps, n_paths=n_paths)
+                        
+                        S_T = paths[:, -1]
+                        pnl = np.zeros(n_paths)
+                        initial_book_value = 0.0
+                        
+                        # Only use selected strategies
+                        for idx in selected_indices:
+                            strat = st.session_state.book[idx]
                             for leg in strat["legs"]:
-                                if remaining_t == 0:
-                                    val = max(0, spot - leg["strike"]) if leg["type"] == "C" else max(0, leg["strike"] - spot)
-                                else:
-                                    val = black_scholes_price(spot, leg["strike"], remaining_t, strat["r"], strat["sigma"], leg["type"])
-                                val_t += leg["position"] * val
-                        pnl[i] = (val_t * np.exp(-r_sim * T_sim) - initial_book_value)
+                                # Use saved premium if available, else fallback to re-calc
+                                p = leg.get("premium", black_scholes_price(strat["S0"], leg["strike"], strat["T"], strat["r"], strat["sigma"], leg["type"]))
+                                initial_book_value += leg["position"] * p
+                        
+                        for i in range(n_paths):
+                            spot = S_T[i]
+                            val_t = 0.0
+                            for idx in selected_indices:
+                                strat = st.session_state.book[idx]
+                                remaining_t = max(0, strat["T"] - T_sim)
+                                for leg in strat["legs"]:
+                                    if remaining_t == 0:
+                                        val = max(0, spot - leg["strike"]) if leg["type"] == "C" else max(0, leg["strike"] - spot)
+                                    else:
+                                        val = black_scholes_price(spot, leg["strike"], remaining_t, strat["r"], strat["sigma"], leg["type"])
+                                    val_t += leg["position"] * val
+                            pnl[i] = (val_t * np.exp(-r_sim * T_sim) - initial_book_value)
+                        
+                        pnl_percent = (pnl / (initial_book_value if initial_book_value!=0 else 1.0)) * 100
+                        
+                        st.session_state["pnl_results"] = {
+                            "pnl_percent": pnl_percent,
+                            "process": process,
+                            "pnl": pnl
+                        }
+
+                if "pnl_results" in st.session_state:
+                    results = st.session_state["pnl_results"]
+                    st.plotly_chart(plot_simulation_results(results["pnl_percent"], results["process"]))
+                    c_metrics1, c_metrics2 = st.columns(2)
+                    with c_metrics1:
+                        st.metric("VaR (95%)", f"{np.percentile(results['pnl'], 5):.2f}")
+                    with c_metrics2:
+                        st.metric("CVaR (95%)", f"{np.mean(results['pnl'][results['pnl'] <= np.percentile(results['pnl'], 5)]):.2f}")
+
+# --- TAB 4: Stress Test ---
+with tabs[3]:
+    if not st.session_state.book:
+        st.warning("Book is empty. Add strategies in 'Spread Visualizer' first.")
+    else:
+        # Selection state (shared with PnL Tab)
+        if "selected_strategies" not in st.session_state:
+            st.session_state.selected_strategies = [True] * len(st.session_state.book)
+        
+        if len(st.session_state.selected_strategies) != len(st.session_state.book):
+            st.session_state.selected_strategies = [True] * len(st.session_state.book)
+
+        st.info(f"Total Strategies: {len(st.session_state.book)}")
+
+        for idx, strat in enumerate(st.session_state.book):
+            name = strat.get("name", "Untitled")
+            with st.expander(f"📍 **{name}**"):
+                c_sel_st, c_details_st = st.columns([0.5, 4.5])
+                with c_sel_st:
+                    current_sel_st = st.checkbox("Select Strategy", value=st.session_state.selected_strategies[idx], key=f"stress_sel_{idx}_{strat['id']}", label_visibility="collapsed")
+                    if current_sel_st != st.session_state.selected_strategies[idx]:
+                        st.session_state.selected_strategies[idx] = current_sel_st
+                        if "pnl_results" in st.session_state:
+                            del st.session_state["pnl_results"]
+                        if "stress_results" in st.session_state:
+                            del st.session_state["stress_results"]
+                        st.rerun()
+                with c_details_st:
+                    # Leg Details
+                    leg_data = []
+                    for leg in strat["legs"]:
+                        pos_str = "Long (+1)" if leg["position"] == 1 else "Short (-1)"
+                        type_str = leg["type"].title()
+                        strike = leg["strike"]
+                        prem = leg.get("premium", 0.0)
+                        leg_data.append({"Position": pos_str, "Type": type_str, "Strike": strike, "Premium": prem})
+                    st.table(pd.DataFrame(leg_data))
+
+        st.divider()
+        
+        c_p1, c_p2 = st.columns([1, 2])
+        with c_p1:
+            st.subheader("Stress Parameters")
+            
+            # --- Quick Scenarios ---
+            st.caption("Quick Scenarios")
+            qs_cols = st.columns(5)
+            if qs_cols[0].button("Spot Shock"):
+                st.session_state.stress_spot = -10.0
+                st.rerun()
+            if qs_cols[1].button("Vol Shock"):
+                st.session_state.stress_vol = 10.0
+                st.rerun()
+            if qs_cols[2].button("Week Decay"):
+                st.session_state.stress_decay = 7
+                st.rerun()
+            if qs_cols[3].button("Equity Crash"):
+                st.session_state.stress_spot = -10.0
+                st.session_state.stress_vol = 10.0
+                st.rerun()
+            if qs_cols[4].button("Equity Rally"):
+                st.session_state.stress_spot = 10.0
+                st.session_state.stress_vol = -5.0
+                st.rerun()
+            
+            st.divider()
+
+            # Initialize keys if missing
+            if "stress_spot" not in st.session_state: st.session_state.stress_spot = 0.0
+            if "stress_vol" not in st.session_state: st.session_state.stress_vol = 0.0
+            if "stress_decay" not in st.session_state: st.session_state.stress_decay = 0
+
+            spot_change_pct = st.slider("Underlying Price Change (%)", -20.0, 20.0, key="stress_spot", step=1.0)
+            vol_change_pts = st.slider("Volatility Change (pts)", -20.0, 20.0, key="stress_vol", step=1.0)
+            time_decay_days = st.slider("Time Decay (Days)", 0, 30, key="stress_decay", step=1)
+            
+            spot_change = spot_change_pct / 100.0
+            vol_change = vol_change_pts / 100.0
+            time_decay = time_decay_days
+
+        with c_p2:
+            st.subheader("Results")
+            selected_indices = [i for i, sel in enumerate(st.session_state.selected_strategies) if sel]
+            
+            if not selected_indices:
+                st.warning("Please select at least one strategy to run stress test.")
+            else:
+                # Calculate Spread Price Variation
+                price_before = 0.0
+                price_after = 0.0
+                days_to_years = time_decay / 365.0
+                
+                for idx in selected_indices:
+                    strat = st.session_state.book[idx]
+                    for leg in strat["legs"]:
+                        # Price Before: Sum of saved premiums
+                        price_before += leg["position"] * leg.get("premium", 0.0)
+                        
+                        # Price After: Reprice with slider variations
+                        new_spot = strat["S0"] * (1 + spot_change)
+                        new_vol = max(0.01, strat["sigma"] + vol_change)
+                        new_t = max(1e-4, strat["T"] - days_to_years)
+                        
+                        # Reprice using BSM for the variation metric
+                        p_after = black_scholes_price(new_spot, leg["strike"], new_t, strat["r"], new_vol, leg["type"])
+                        price_after += leg["position"] * p_after
+
+                variation = price_after - price_before
+                st.metric("Spread Price Variation", f"${variation:.2f}", help="Price After Stress - Price Before Stress")
+                
+                c_m1, c_m2 = st.columns(2)
+                with c_m1:
+                    st.write(f"**Price Before Stress**: ${price_before:.2f}")
+                with c_m2:
+                    st.write(f"**Price After Stress**: ${price_after:.2f}")
+
+                # --- PnL Attribution ---
+                st.divider()
+                st.subheader("PnL Attribution (Taylor Approximation)")
+                
+                attr_totals = {"Delta": 0.0, "Gamma": 0.0, "Vega": 0.0, "Theta": 0.0}
+                
+                # We reuse the slider values for attribution
+                for idx in selected_indices:
+                    strat = st.session_state.book[idx]
+                    dS = strat["S0"] * spot_change
+                    dVol = vol_change # already in points
+                    dT = days_to_years # time passed
                     
-                    pnl_percent = (pnl / (initial_book_value if initial_book_value!=0 else 1.0)) * 100
-                    
-                    st.plotly_chart(plot_simulation_results(pnl_percent, process))
-                    st.metric("VaR (95%)", f"{np.percentile(pnl, 5):.2f}")
-                    st.metric("CVaR (95%)", f"{np.mean(pnl[pnl <= np.percentile(pnl, 5)]):.2f}")
+                    for leg in strat["legs"]:
+                        attr = calculate_pnl_attribution(
+                            strat["S0"], leg["strike"], strat["T"], strat["r"], strat["sigma"], 
+                            leg["type"], dS, dVol, dT
+                        )
+                        for k in attr_totals:
+                            attr_totals[k] += leg["position"] * attr[k]
+                
+                pnl_explained = sum(attr_totals.values())
+                residual = variation - pnl_explained
+                
+                c_attr1, c_attr2, c_attr3, c_attr4 = st.columns(4)
+                c_attr1.metric("Delta", f"${attr_totals['Delta']:.2f}")
+                c_attr2.metric("Gamma", f"${attr_totals['Gamma']:.2f}")
+                c_attr3.metric("Vega", f"${attr_totals['Vega']:.2f}")
+                c_attr4.metric("Theta", f"${attr_totals['Theta']:.2f}")
+                
+                st.metric("PnL Residual", f"${residual:.2f}", help="Total Variation - Sum of explained Greeks")
+            
 
 
 # --- TAB 5: Volatility Smile ---
-with tabs[3]:
+with tabs[4]:
     # st.header("Volatility Smile (Previous Day)")
     
     col_input, col_view = st.columns([1, 2])
@@ -571,7 +816,7 @@ with tabs[3]:
              st.info("Select parameters and click Fetch Data.")
 
 # --- TAB 6: Volatility Surface ---
-with tabs[4]:
+with tabs[5]:
     # st.header("Volatility Surface (Custom Timeframe)")
     
     col_s_input, col_s_view = st.columns([1, 2])

@@ -1,12 +1,30 @@
+import streamlit as st
 from massive import RESTClient
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-
-# API Key provided by user
-API_KEY = "m96R5pBNQ9fm3__LOjSR4AYniFwiqVKh"
-
 import time
+
+# Default API Key (Fallback)
+DEFAULT_API_KEY = "m96R5pBNQ9fm3__LOjSR4AYniFwiqVKh"
+
+def get_api_key():
+    """Returns the user-provided API key from session state, or the default one."""
+    return st.session_state.get("user_api_key", DEFAULT_API_KEY)
+
+def validate_api_key(api_key):
+    """
+    Attempts a simple API call to validate the key.
+    Returns (bool, message)
+    """
+    client = RESTClient(api_key)
+    try:
+        # Try fetching a very basic aggregate for a common ticker
+        # If it doesn't raise an Auth error, it's likely valid.
+        _ = client.list_aggs("AAPL", 1, "day", "2023-01-01", "2023-01-02")
+        return True, "API Key is valid."
+    except Exception as e:
+        return False, f"Validation Failed: {str(e)}"
 
 def get_option_aggregates(ticker, expiration_date, option_type, strike, start_date, end_date, limit=120):
     """
@@ -24,7 +42,7 @@ def get_option_aggregates(ticker, expiration_date, option_type, strike, start_da
         start_date (str): YYYY-MM-DD
         end_date (str): YYYY-MM-DD
     """
-    client = RESTClient(API_KEY)
+    client = RESTClient(get_api_key())
     
     # Format Expiration: YYMMDD
     exp_str = expiration_date.strftime("%y%m%d")
@@ -81,7 +99,7 @@ def get_option_previous_close(ticker, expiration_date, option_type, strike):
     Fetch previous day bar (Previous Close) for a specific option contract.
     Returns (DataFrame, error_message)
     """
-    client = RESTClient(API_KEY)
+    client = RESTClient(get_api_key())
     
     exp_str = expiration_date.strftime("%y%m%d")
     strike_val = int(strike * 1000)
@@ -139,7 +157,7 @@ def get_stock_history_vol(ticker, end_date_str, retries=10, shift_days=0):
     Returns:
         (last_close, volatility, error_message)
     """
-    client = RESTClient(API_KEY)
+    client = RESTClient(get_api_key())
     
     # Approx 1 year back, shifted by retry count
     dt_end = datetime.strptime(end_date_str,("%Y-%m-%d"))
@@ -216,7 +234,7 @@ def get_underlying_history_range(ticker, start_date_str, end_date_str):
     Fetch daily close prices for underlying between dates.
     Returns ({date_obj: close_price}, error_message)
     """
-    client = RESTClient(API_KEY)
+    client = RESTClient(get_api_key())
     try:
         results = client.list_aggs(
             ticker, 

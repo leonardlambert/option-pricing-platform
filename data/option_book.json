@@ -1,22 +1,47 @@
 [
   {
-    "id": "20251215153524",
-    "name": "My Strategy",
-    "timestamp": "2025-12-15 15:35:24",
+    "id": "20251218105021",
+    "name": "straddle",
+    "timestamp": "2025-12-18 10:50:21",
     "S0": 100.0,
     "T": 1.0,
     "r": 0.05,
     "sigma": 0.2,
     "legs": [
       {
-        "type": "call",
-        "strike": 110.0,
-        "position": 1
+        "type": "P",
+        "strike": 120.0,
+        "position": 1,
+        "premium": 17.395
       },
       {
-        "type": "put",
-        "strike": 90.0,
-        "position": 1
+        "type": "C",
+        "strike": 100.0,
+        "position": 1,
+        "premium": 10.4506
+      }
+    ]
+  },
+  {
+    "id": "20251218110047",
+    "name": "bear spread",
+    "timestamp": "2025-12-18 11:00:47",
+    "S0": 100.0,
+    "T": 1.0,
+    "r": 0.05,
+    "sigma": 0.2,
+    "legs": [
+      {
+        "type": "C",
+        "strike": 120.0,
+        "position": 1,
+        "premium": 3.2475
+      },
+      {
+        "type": "C",
+        "strike": 100.0,
+        "position": -1,
+        "premium": 10.4506
       }
     ]
   }

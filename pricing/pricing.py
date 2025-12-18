@@ -49,6 +49,25 @@ def compute_greeks(S, K, T, r, sigma, option_type):
         
     return delta, gamma, theta, vega, rho
 
+def calculate_pnl_attribution(S, K, T, r, sigma, option_type, dS, dVol, dT):
+    """
+    Calculate Taylor PnL Attribution component-wise for a single option.
+    Formula: Delta*dS + 0.5*Gamma*dS^2 + Vega*dVol + Theta*dT
+    """
+    delta, gamma, theta, vega, _ = compute_greeks(S, K, T, r, sigma, option_type)
+    
+    delta_attr = delta * dS
+    gamma_attr = 0.5 * gamma * (dS**2)
+    vega_attr = vega * dVol
+    theta_attr = theta * dT
+    
+    return {
+        "Delta": delta_attr,
+        "Gamma": gamma_attr,
+        "Vega": vega_attr,
+        "Theta": theta_attr
+    }
+
 import math
 
 # --- GBS Limits & Constants ---
