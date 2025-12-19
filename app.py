@@ -11,7 +11,7 @@ from pricing.FFT_pricer import fft_pricer
 from pricing.characteristic_functions import phi_bsm, phi_vg, phi_merton
 from src.visualizer import plot_spread_analysis, plot_simulation_results, plot_efficient_frontier
 from src.simulation import simulate_gbm_paths, simulate_vg_paths, simulate_mjd_paths
-from src.market_data import get_option_aggregates, get_option_previous_close, get_stock_history_vol, get_underlying_history_range, validate_api_key
+from src.market_data import get_option_aggregates, get_option_previous_close, get_stock_history_vol, get_underlying_history_range, validate_api_key, get_available_dates, get_all_preloaded_options
 
 # Page Config
 st.set_page_config(page_title="Option Pricing & Risk Management", layout="wide", page_icon="📈", initial_sidebar_state="collapsed")
@@ -72,7 +72,7 @@ with st.sidebar:
     # 2. API Key Management (only if Live API is selected)
     if st.session_state["data_mode"] == "Live API":
         st.subheader("Massive / Polygon API key")
-        user_key = st.text_input("Enter API Key", type="password", help="Enter your Massive API key here to override the default one.")
+        user_key = st.text_input("Enter API Key", type="password", help="Enter your Massive API key here to fetch live market data.")
         
         if st.button("Validate & Apply Key"):
             if not user_key:
@@ -83,16 +83,18 @@ with st.sidebar:
                     if is_valid:
                         st.session_state["user_api_key"] = user_key
                         st.success("API Key validated and applied!")
+                        st.rerun()
                     else:
                         st.error(msg)
         
         if "user_api_key" in st.session_state:
-            st.info("Currently using: **Custom API Key**")
-            if st.button("Reset to Default Key"):
+            st.info("Currently using: **Applied API Key**")
+            if st.button("Clear Applied Key"):
                 del st.session_state["user_api_key"]
                 st.rerun()
         else:
-            st.caption("Currently using: Preloaded Dataset")
+            st.warning("⚠️ No API Key Applied. Live data fetch will fail.")
+            st.caption("Please enter a valid Massive API key to use Live mode.")
     else:
         st.info("Currently using: **Preloaded Dataset**")
         st.caption("No API key required in this mode.")
@@ -719,7 +721,7 @@ with tabs[4]:
         
         if st.session_state.get("data_mode") == "Live API":
             st.subheader("Data Fetching")
-            if st.button("Fetch Data", key="smile_fetch"):
+            if st.button("Fetch Data", key="smile_fetch", disabled=("user_api_key" not in st.session_state)):
                 # Clear conflicting surface data if any
                 if "surface_data" in st.session_state: del st.session_state["surface_data"]
                 if "custom_data_table" in st.session_state: del st.session_state["custom_data_table"]
@@ -1000,7 +1002,8 @@ with tabs[5]:
             if start_date >= end_date:
                 st.error("Start Date must be before End Date.")
             
-            if st.button("Fetch Data", key="surf_fetch", disabled=(start_date >= end_date)):
+            is_key_missing = "user_api_key" not in st.session_state
+            if st.button("Fetch Data", key="surf_fetch", disabled=(start_date >= end_date or is_key_missing)):
                 # Clear conflicting smile data AND previous surface plots
                 if "center_data" in st.session_state: del st.session_state["center_data"]
                 if "smile_data" in st.session_state: del st.session_state["smile_data"]
@@ -1081,9 +1084,6 @@ with tabs[5]:
                 if "custom_data_table" in st.session_state: del st.session_state["custom_data_table"]
 
                 with st.spinner("Processing offline dataset..."):
-                    # Strikes scope
-                    strikes_to_fetch = [strike - 20, strike - 10, strike - 5, strike, strike + 5, strike + 10, strike + 20]
-                    
                     # 1. Fetch Underlying Range
                     u_data, u_err = get_underlying_history_range(
                         ticker, 
@@ -1092,32 +1092,33 @@ with tabs[5]:
                     )
                     
                     if u_data:
-                        all_surface_data = []
-                        for k_curr in strikes_to_fetch:
-                            df_data, err_msg = get_option_aggregates(
-                                ticker, exp_date, op_type, k_curr, 
-                                surf_start_date.strftime("%Y-%m-%d"), 
-                                surf_end_date.strftime("%Y-%m-%d")
-                            )
-                            
-                            if not df_data.empty:
-                                for _, row in df_data.iterrows():
-                                    d_date = row["Date"].date()
-                                    if d_date in u_data:
-                                        S_t = u_data[d_date]
-                                        
-                                        if "Implied Volatility" in row:
-                                            iv_t = row["Implied Volatility"]
-                                        else:
-                                            T_t = (pd.to_datetime(exp_date).date() - d_date).days / 365.0
-                                            if T_t < 0.001: T_t = 0.001
-                                            iv_t, _ = implied_volatility(row["Close"], S_t, k_curr, T_t, 0.05, op_type)
-                                        
-                                        if iv_t is not None:
-                                            all_surface_data.append({
-                                                "Date": row["Date"], "Underlying": S_t, "OptionPrice": row["Close"],
-                                                "Strike": k_curr, "Moneyness": np.log(k_curr / S_t), "IV": iv_t
-                                            })
+                        # 2. Fetch ALL available strikes for this ticker/expiry/type
+                        df_all_opt, err_msg = get_all_preloaded_options(
+                            ticker, exp_date, op_type, 
+                            surf_start_date.strftime("%Y-%m-%d"), 
+                            surf_end_date.strftime("%Y-%m-%d")
+                        )
+                        
+                        if not df_all_opt.empty:
+                            all_surface_data = []
+                            for _, row in df_all_opt.iterrows():
+                                d_date = row["Date"].date()
+                                if d_date in u_data:
+                                    S_t = u_data[d_date]
+                                    k_curr = row["Strike"]
+                                    
+                                    if "Implied Volatility" in row:
+                                        iv_t = row["Implied Volatility"]
+                                    else:
+                                        T_t = (pd.to_datetime(exp_date).date() - d_date).days / 365.0
+                                        if T_t < 0.001: T_t = 0.001
+                                        iv_t, _ = implied_volatility(row["Close"], S_t, k_curr, T_t, 0.05, op_type)
+                                    
+                                    if iv_t is not None:
+                                        all_surface_data.append({
+                                            "Date": row["Date"], "Underlying": S_t, "OptionPrice": row["Close"],
+                                            "Strike": k_curr, "Moneyness": np.log(k_curr / S_t), "IV": iv_t
+                                        })
                         
                         if all_surface_data:
                             st.session_state["custom_data_table"] = pd.DataFrame(all_surface_data)
@@ -1172,19 +1173,20 @@ with tabs[5]:
                 
                 st.divider()
                 st.subheader("Implied Volatility Surface")
+                st.info(f"Surface generated using {len(df_surf)} data points.")
                 
                 # --- Advanced Surface: 2D Interpolation (TTE vs Moneyness vs IV) ---
                 try:
                     # 1. Prepare Data
                     df_clean = df_surf.copy()
-                    df_clean['DateObj'] = pd.to_datetime(df_clean['Date'])
-                    exp_date_obj = pd.to_datetime(exp_date)
-                    # Use .dt.days to get integer days, then float division
-                    df_clean['TimeToExp'] = (exp_date_obj - df_clean['DateObj']).dt.days / 365.0
+                    df_clean['Date'] = pd.to_datetime(df_clean['Date'])
+                    df_clean['TimeToExp'] = (pd.to_datetime(exp_date) - df_clean['Date']).dt.days / 365.0
                     
-                    # Filter for validity
+                    # Sanity Check: Positive IV and Future Dates
+                    df_clean = df_clean[(df_clean['IV'] > 0) & (df_clean['TimeToExp'] > 0)].copy()
+                    
+                    # Filter for validity and drop NaNs
                     df_clean = df_clean.replace([np.inf, -np.inf], np.nan).dropna(subset=["IV", "Moneyness", "TimeToExp"])
-                    df_clean = df_clean[df_clean['TimeToExp'] > 0]
                     
                     if len(df_clean) < 4:
                         st.warning("Insufficient data points to form a surface. Need at least 4 valid points.")

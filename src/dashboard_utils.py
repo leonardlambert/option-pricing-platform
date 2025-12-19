@@ -11,7 +11,7 @@ def initialize_session_state():
     if "book" not in st.session_state:
         st.session_state.book = load_book()
     if "data_mode" not in st.session_state:
-        st.session_state["data_mode"] = "Live API"
+        st.session_state["data_mode"] = "Preloaded Dataset"
 
 def load_book():
     if os.path.exists(BOOK_FILE):

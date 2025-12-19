@@ -5,12 +5,9 @@ import numpy as np
 from datetime import datetime, timedelta
 import time
 
-# Default API Key (Fallback)
-DEFAULT_API_KEY = "m96R5pBNQ9fm3__LOjSR4AYniFwiqVKh"
-
 def get_api_key():
-    """Returns the user-provided API key from session state, or the default one."""
-    return st.session_state.get("user_api_key", DEFAULT_API_KEY)
+    """Returns the user-provided API key from session state, or None."""
+    return st.session_state.get("user_api_key")
 
 def validate_api_key(api_key):
     """
@@ -281,3 +278,43 @@ def get_available_dates(ticker, opt_type):
     except Exception as e:
         st.error(f"Error fetching available dates: {e}")
         return []
+def get_all_preloaded_options(ticker, expiration_date, option_type, start_date, end_date):
+    """Fetch all strikes and OHLCV for a ticker/expiry/type range from preloaded dataset."""
+    if st.session_state.get("data_mode") != "Preloaded Dataset":
+        return pd.DataFrame(), "Not in Preloaded Dataset mode."
+    
+    try:
+        df_opt = load_preloaded_options()
+        if df_opt.empty:
+            return pd.DataFrame(), "Preloaded options CSV not found or empty."
+        
+        # Determine exact type string from 'C'/'P'
+        type_str = 'Call' if option_type == 'C' else 'Put'
+        
+        # Filter by Ticker, Expiry (formatted as YYYY-MM-DD), Type, and Date Range
+        exp_str = expiration_date.strftime("%Y-%m-%d")
+        
+        mask = (df_opt['ticker'] == ticker) & \
+               (df_opt['expiry'] == exp_str) & \
+               (df_opt['type'] == type_str) & \
+               (df_opt['Date'] >= pd.to_datetime(start_date)) & \
+               (df_opt['Date'] <= pd.to_datetime(end_date))
+        
+        res = df_opt[mask].sort_values(["Date", "Strike"])
+        
+        if res.empty:
+            return pd.DataFrame(), f"No data found for {ticker} {type_str} expiring {exp_str} in range."
+            
+        # Ensure schema consistency
+        cols = ["Date", "Strike", "Open", "High", "Low", "Close", "Volume"]
+        if "Implied Volatility" in res.columns:
+            cols.append("Implied Volatility")
+        
+        res = res.copy()
+        if 'Transactions' not in res.columns:
+            res['Transactions'] = 0
+        cols.append("Transactions")
+        
+        return res[cols], None
+    except Exception as e:
+        return pd.DataFrame(), f"Local Data Error: {str(e)}"
