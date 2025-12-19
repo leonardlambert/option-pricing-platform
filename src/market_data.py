@@ -26,17 +26,35 @@ def validate_api_key(api_key):
     except Exception as e:
         return False, f"Validation Failed: {str(e)}"
 
+@st.cache_data
+def load_preloaded_options():
+    try:
+        df = pd.read_csv("data/preloaded_options.csv")
+        df['Date'] = pd.to_datetime(df['Date'])
+        return df
+    except Exception as e:
+        return pd.DataFrame()
+
+@st.cache_data
+def load_preloaded_prices():
+    try:
+        df = pd.read_csv("data/preloaded_prices.csv")
+        df['Date'] = pd.to_datetime(df['Date'])
+        return df
+    except Exception as e:
+        return pd.DataFrame()
+
 def get_option_aggregates(ticker, expiration_date, option_type, strike, start_date, end_date, limit=120):
     """Fetch OHLCV aggregates for a specific option contract."""
     if st.session_state.get("data_mode") == "Preloaded Dataset":
         try:
-            df_opt = pd.read_csv("data/preloaded_options.csv")
-            df_opt['Date'] = pd.to_datetime(df_opt['Date'])
+            df_opt = load_preloaded_options()
+            if df_opt.empty:
+                return pd.DataFrame(), "Preloaded options CSV not found or empty."
             
             exp_str = expiration_date.strftime("%y%m%d")
             strike_val = int(strike * 1000)
             strike_str = f"{strike_val:08d}"
-            # Support both P/C in the check
             contract_symbol = f"O:{ticker}{exp_str}{option_type}{strike_str}"
             
             mask = (df_opt['Symbol'] == contract_symbol) & \
@@ -47,12 +65,17 @@ def get_option_aggregates(ticker, expiration_date, option_type, strike, start_da
             if res.empty:
                 return pd.DataFrame(), f"No data found in preloaded dataset for {contract_symbol}"
             
-            # Match schema expected by app
-            res = res.rename(columns={"Transactions": "Transactions"}) # Ensure consistent if needed
+            # Match schema expected by app. Include Implied Volatility if present.
+            cols = ["Date", "Open", "High", "Low", "Close", "Volume"]
+            if "Implied Volatility" in res.columns:
+                cols.append("Implied Volatility")
+            
+            res = res.copy()
             if 'Transactions' not in res.columns:
                 res['Transactions'] = 0
+            cols.append("Transactions")
                 
-            return res[["Date", "Open", "High", "Low", "Close", "Volume", "Transactions"]], None
+            return res[cols], None
         except Exception as e:
             return pd.DataFrame(), f"Local Data Error: {str(e)}"
 
@@ -96,17 +119,26 @@ def get_option_previous_close(ticker, expiration_date, option_type, strike):
 
     if st.session_state.get("data_mode") == "Preloaded Dataset":
         try:
-            df_opt = pd.read_csv("data/preloaded_options.csv")
-            df_opt['Date'] = pd.to_datetime(df_opt['Date'])
+            df_opt = load_preloaded_options()
+            if df_opt.empty:
+                return pd.DataFrame(), "Preloaded options CSV not found or empty.", contract_symbol
+            
             res = df_opt[df_opt['Symbol'] == contract_symbol].sort_values("Date")
             if res.empty:
                 return pd.DataFrame(), "No data in preloaded CSV", contract_symbol
             
             # The app expects the "latest" available in the CSV as the "previous close" for simulation
             latest = res.tail(1).copy()
+            
+            cols = ["Date", "Open", "High", "Low", "Close", "Volume"]
+            if "Implied Volatility" in latest.columns:
+                cols.append("Implied Volatility")
+            
             if 'Transactions' not in latest.columns:
                 latest['Transactions'] = 0
-            return latest[["Date", "Open", "High", "Low", "Close", "Volume", "Transactions"]], None, contract_symbol
+            cols.append("Transactions")
+            
+            return latest[cols], None, contract_symbol
         except Exception as e:
             return pd.DataFrame(), f"Local Error: {str(e)}", contract_symbol
 
@@ -134,8 +166,10 @@ def get_stock_history_vol(ticker, end_date_str, retries=10, shift_days=0):
     """Fetch 1 year of daily history to get Close and Vol."""
     if st.session_state.get("data_mode") == "Preloaded Dataset":
         try:
-            df_p = pd.read_csv("data/preloaded_prices.csv")
-            df_p['Date'] = pd.to_datetime(df_p['Date'])
+            df_p = load_preloaded_prices()
+            if df_p.empty:
+                 return None, None, "Preloaded prices CSV not found or empty."
+            
             if ticker not in df_p.columns:
                 return None, None, f"Ticker {ticker} not in preloaded prices."
             
@@ -186,8 +220,10 @@ def get_underlying_history_range(ticker, start_date_str, end_date_str):
     """Fetch daily close prices for underlying between dates."""
     if st.session_state.get("data_mode") == "Preloaded Dataset":
         try:
-            df_p = pd.read_csv("data/preloaded_prices.csv")
-            df_p['Date'] = pd.to_datetime(df_p['Date'])
+            df_p = load_preloaded_prices()
+            if df_p.empty:
+                return {}, "Preloaded prices CSV not found or empty."
+            
             if ticker not in df_p.columns:
                 return {}, f"Ticker {ticker} not in preloaded prices."
             
@@ -217,3 +253,31 @@ def get_underlying_history_range(ticker, start_date_str, end_date_str):
              time.sleep(60)
              return get_underlying_history_range(ticker, start_date_str, end_date_str)
         return {}, str(e)
+
+def get_available_dates(ticker, opt_type):
+    """Returns a sorted list of dates present in both options and prices CSVs for a ticker/type."""
+    if st.session_state.get("data_mode") != "Preloaded Dataset":
+        return []
+    
+    try:
+        df_opt = load_preloaded_options()
+        df_p = load_preloaded_prices()
+        
+        if df_opt.empty or df_p.empty:
+            return []
+        
+        # Options Filter: Ticker and Type
+        mask_opt = (df_opt['ticker'] == ticker) & (df_opt['type'] == ('Call' if opt_type == 'C' else 'Put'))
+        available_opt_dates = set(df_opt[mask_opt]['Date'].dt.date)
+        
+        # Prices Filter: Ticker column must exist and be non-null
+        if ticker not in df_p.columns:
+            return []
+        available_price_dates = set(df_p[df_p[ticker].notna()]['Date'].dt.date)
+        
+        # Intersection
+        common = sorted(list(available_opt_dates.intersection(available_price_dates)))
+        return common
+    except Exception as e:
+        st.error(f"Error fetching available dates: {e}")
+        return []

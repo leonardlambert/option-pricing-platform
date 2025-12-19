@@ -79,7 +79,7 @@ with st.sidebar:
                 st.error("Please enter a key.")
             else:
                 with st.spinner("Validating..."):
-                    is_valid, msg = validate_api_key(user_key)
+                    is_valid, msg = validate_api_key(user_key)  
                     if is_valid:
                         st.session_state["user_api_key"] = user_key
                         st.success("API Key validated and applied!")
@@ -612,6 +612,8 @@ with tabs[3]:
 with tabs[4]:
     # st.header("Volatility Smile (Previous Day)")
     
+    analysis_date = None
+
     col_input, col_view = st.columns([1, 2])
     
     with col_input:
@@ -619,17 +621,91 @@ with tabs[4]:
         if st.session_state.get("data_mode") == "Preloaded Dataset":
             ticker = st.selectbox("Ticker", ["AAPL", "NVDA", "SPY"], key="smile_ticker").upper()
             
+            # --- DATE PICKER REFINEMENT (BACK TO CALENDAR BOX) ---
+            from src.market_data import get_available_dates
+            # Note: op_type is defined below, but we can peek at session state or use default
+            temp_op_type = st.session_state.get("smile_op_type", "C")
+            available_dates = get_available_dates(ticker, temp_op_type)
+            
+            if available_dates:
+                analysis_date = st.date_input(
+                    "Analysis Date",
+                    value=available_dates[-1],
+                    min_value=available_dates[0],
+                    max_value=available_dates[-1],
+                    key="smile_analysis_date"
+                )
+            else:
+                analysis_date = st.date_input("Analysis Date", disabled=True, key="smile_analysis_date_disabled")
+                st.error(f"No concurrent data for {ticker} {temp_op_type} in preloaded CSVs.")
+
             c_exp1, c_exp2 = st.columns(2)
-            # Locked Expiration
-            exp_date = c_exp1.date_input("Expiration", value=datetime(2026, 2, 20), disabled=True, key="smile_exp")
+            # Locked Expiration - Display as 2026/02/20
+            c_exp1.text_input("Expiration", value="2026/02/20", disabled=True, key="smile_exp_disp")
+            exp_date = datetime(2026, 2, 20).date() 
             op_type = c_exp2.selectbox("Type", ["C", "P"], key="smile_op_type")
             
             # Locked Central Strike based on Ticker
             strike_map = {"NVDA": 170.0, "AAPL": 270.0, "SPY": 670.0}
             default_strike = strike_map.get(ticker, 100.0)
-            # Use a reactive value for display
             st.number_input("Central Strike", value=default_strike, disabled=True, step=1.0, key=f"smile_strike_disp_{ticker}")
             strike = default_strike # Internal variable for logic
+            
+            # --- ACTION BUTTON (PRELOADED) ---
+            st.divider()
+            if st.button("Update Data & Generate Smile", key="smile_full_update_preloaded"):
+                if analysis_date:
+                    ref_date_str = analysis_date.strftime("%Y-%m-%d")
+                    with st.spinner(f"Updating data for {ref_date_str}..."):
+                        # Reuse get_stock_history_vol and get_option_aggregates (which use cache)
+                        S_real, hv_real, err_s = get_stock_history_vol(ticker, ref_date_str)
+                        df_opt_bar, err_o = get_option_aggregates(ticker, exp_date, op_type, strike, ref_date_str, ref_date_str)
+                        
+                        if not df_opt_bar.empty and S_real:
+                            row_i = df_opt_bar.iloc[0]
+                            st.session_state["underlying_S"] = S_real
+                            st.session_state["underlying_HV"] = hv_real
+                            st.session_state["market_mode"] = "Previous Day"
+                            
+                            # Store in center_data for display
+                            time_to_exp = (pd.to_datetime(exp_date).date() - analysis_date).days / 365.0
+                            st.session_state["center_data"] = {
+                                "Strike": strike, "Date": row_i["Date"], "Open": row_i["Open"], "High": row_i["High"],
+                                "Low": row_i["Low"], "Close": row_i["Close"], "Volume": row_i["Volume"],
+                                "IV": row_i.get("Implied Volatility"), "IV_Error": None, "TimeToExp": time_to_exp
+                            }
+
+                            # --- GENERATE SMILE IMMEDIATELY ---
+                            from src.market_data import load_preloaded_options
+                            df_all = load_preloaded_options()
+                            mask = (df_all['ticker'] == ticker) & \
+                                   (df_all['type'] == ('Call' if op_type == 'C' else 'Put')) & \
+                                   (df_all['Date'].dt.date == analysis_date)
+                            df_day = df_all[mask].sort_values("Strike")
+                            
+                            if not df_day.empty:
+                                smile_rows = []
+                                for _, row_s in df_day.iterrows():
+                                    smile_rows.append({
+                                        "Strike": row_s["Strike"], 
+                                        "IV": row_s.get("Implied Volatility"), 
+                                        "Price": row_s["Close"], 
+                                        "Moneyness": np.log(row_s["Strike"] / S_real)
+                                    })
+                                st.session_state["smile_data"] = pd.DataFrame(smile_rows)
+                                st.success(f"Data and Smile updated for {ref_date_str}!")
+                            else:
+                                st.session_state.pop("smile_data", None)
+                                st.warning("Metrics updated, but no strikes found for smile.")
+                        else:
+                            st.warning(f"No concurrent data found for {ticker} on {ref_date_str}")
+                else:
+                    st.error("Please select a valid analysis date.")
+
+            if not available_dates:
+                st.error(f"No concurrent data for {ticker} {temp_op_type} in preloaded CSVs.")
+
+
         else:
             ticker = st.text_input("Ticker", value="AAPL", key="smile_ticker").upper()
             
@@ -679,14 +755,18 @@ with tabs[4]:
                             st.session_state["underlying_S"] = S_real
                             st.session_state["underlying_HV"] = hv_real
                             
-                            # Calc Center IV
-                            time_to_exp = (pd.to_datetime(exp_date) - row["Date"]).days / 365.0
-                            if time_to_exp < 0.001: time_to_exp = 0.001
-    
-                            iv_c, iv_err_c = implied_volatility(row["Close"], S_real, strike, time_to_exp, 0.05, op_type)
+                            # Calc Center IV or use precomputed
+                            if "Implied Volatility" in row:
+                                iv_c = row["Implied Volatility"]
+                                iv_err_c = None
+                            else:
+                                time_to_exp = (pd.to_datetime(exp_date) - row["Date"]).days / 365.0
+                                if time_to_exp < 0.001: time_to_exp = 0.001
+                                iv_c, iv_err_c = implied_volatility(row["Close"], S_real, strike, time_to_exp, 0.05, op_type)
+                                
                             st.session_state["center_data"]["IV"] = iv_c
                             st.session_state["center_data"]["IV_Error"] = iv_err_c
-                            st.session_state["center_data"]["TimeToExp"] = time_to_exp
+                            st.session_state["center_data"]["TimeToExp"] = (pd.to_datetime(exp_date) - row["Date"]).days / 365.0
                             
                             st.success("Option Data Loaded!")
                         else:
@@ -695,75 +775,18 @@ with tabs[4]:
                             st.session_state["center_data"]["IV_Error"] = f"Underlying Missing: {err_s}"
                     else:
                         st.error(f"Center Strike Option Data Error: {err_msg}")
-        else:
-            st.subheader("Smile Generation")
-            # Analysis Date picker (Preloaded mode)
-            # Dates in preloaded: 2024-12-18 to 2025-12-17
-            analysis_date = st.date_input("Analysis Date", value=datetime(2025, 12, 17), min_value=datetime(2024, 12, 18), max_value=datetime(2025, 12, 17), key="smile_analysis_date")
-            
-            if st.button("Generate Smile", key="smile_gen_preloaded"):
-                # Clear conflicting surface data
-                if "surface_data" in st.session_state: del st.session_state["surface_data"]
-                if "custom_data_table" in st.session_state: del st.session_state["custom_data_table"]
-                
-                with st.spinner("Processing offline dataset..."):
-                    # Logic: Fetch center and neighbors for this specific date
-                    strikes_to_fetch = [strike - 20, strike - 10, strike - 5, strike, strike + 5, strike + 10, strike + 20]
-                    ref_date_str = analysis_date.strftime("%Y-%m-%d")
-                    
-                    # 1. Fetch Underlying for this date
-                    S_real, hv_real, err_s = get_stock_history_vol(ticker, ref_date_str)
-                    
-                    if S_real:
-                        st.session_state["underlying_S"] = S_real
-                        st.session_state["underlying_HV"] = hv_real
-                        
-                        smile_rows = []
-                        center_data = None
-                        
-                        time_to_exp = (pd.to_datetime(exp_date) - pd.to_datetime(analysis_date)).days / 365.0
-                        if time_to_exp < 0.001: time_to_exp = 0.001
-                        
-                        for k_i in strikes_to_fetch:
-                            df_i, err_i = get_option_aggregates(ticker, exp_date, op_type, k_i, ref_date_str, ref_date_str)
-                            
-                            if not df_i.empty:
-                                row_i = df_i.iloc[0]
-                                iv_i, iv_err_i = implied_volatility(row_i["Close"], S_real, k_i, time_to_exp, 0.05, op_type)
-                                
-                                row_dict = {
-                                    "Strike": k_i, 
-                                    "IV": iv_i, 
-                                    "Price": row_i["Close"], 
-                                    "Moneyness": np.log(k_i / S_real)
-                                }
-                                smile_rows.append(row_dict)
-                                
-                                if k_i == strike:
-                                    center_data = {
-                                        "Strike": k_i, "Date": row_i["Date"], "Open": row_i["Open"], "High": row_i["High"],
-                                        "Low": row_i["Low"], "Close": row_i["Close"], "Volume": row_i["Volume"],
-                                        "IV": iv_i, "IV_Error": iv_err_i, "TimeToExp": time_to_exp
-                                    }
-                        
-                        if smile_rows:
-                            st.session_state["smile_data"] = pd.DataFrame(smile_rows).sort_values("Strike")
-                            st.session_state["center_data"] = center_data
-                            st.session_state["market_mode"] = "Previous Day" # Reuse state to trigger plots
-                            st.success(f"Smile generated for {ref_date_str}!")
-                        else:
-                            st.error("No option data found for this date in preloaded set.")
-                    else:
-                        st.error(f"Underlying data missing for {ref_date_str}")
-
     with col_input:
-        # Step 2: Generate Smile (Live Mode only, Preloaded does it in one go)
+        # Step 2: Generate Smile (Live Mode only)
         if st.session_state.get("data_mode") == "Live API" and st.session_state.get("market_mode") == "Previous Day" and "center_data" in st.session_state:
             st.divider()
             if st.button("Generate Volatility Smile", key="smile_gen"):
-                with st.spinner("Fetching neighbor strikes..."):
+                # Live API Logic
+                with st.spinner("Fetching neighbor strikes via API..."):
                     center = st.session_state["center_data"]
                     S_real = st.session_state["underlying_S"]
+                    ticker = st.session_state.get("smile_ticker", "AAPL")
+                    exp_date = st.session_state.get("smile_exp")
+                    op_type = st.session_state.get("smile_op_type", "C")
                     
                     # Strikes to fetch: [-10, +10]
                     strikes_to_fetch = [
@@ -791,22 +814,11 @@ with tabs[4]:
                         
                         if not df_i.empty:
                             row_i = df_i.iloc[0]
-                            # Reuse T from center (approx same day)
-                            # print("DEBUG","S", S_real,"K", k_i, "price", row_i["Close"],"T", center["TimeToExp"])
                             iv_i, iv_err_i = implied_volatility(
-                                row_i["Close"], 
-                                S_real, 
-                                k_i, 
-                                center["TimeToExp"], 
-                                0.05, 
-                                op_type
+                                row_i["Close"], S_real, k_i, center["TimeToExp"], 0.05, op_type
                             )
-                            # if iv_i is None: ... (handled internally now)
                             smile_rows.append({
-                                "Strike": k_i, 
-                                "IV": iv_i, 
-                                "Price": row_i["Close"], 
-                                "Moneyness": calc_moneyness(S_real, k_i)
+                                "Strike": k_i, "IV": iv_i, "Price": row_i["Close"], "Moneyness": calc_moneyness(S_real, k_i)
                             })
                     
                     st.session_state["smile_data"] = pd.DataFrame(smile_rows).sort_values("Strike")
@@ -834,7 +846,26 @@ with tabs[4]:
             if "underlying_S" in st.session_state:
                 udata = st.columns(2)
                 udata[0].metric("Underlying Price", f"${st.session_state.get('underlying_S', 0):.2f}")
-                udata[1].metric("Historical Volatility (1Y)", f"{st.session_state.get('underlying_HV',0)*100:.2f}%")
+                
+                # --- CONSTANT HV LOGIC (PRELOADED) ---
+                curr_hv = st.session_state.get('underlying_HV', 0)
+                if st.session_state.get("data_mode") == "Preloaded Dataset":
+                    # Fix HV value for preloaded mode relative to the ticker's latest data
+                    t_curr = st.session_state.get("smile_ticker", "AAPL")
+                    # If we haven't cached the 'constant' HV for this ticker yet
+                    if f"constant_hv_{t_curr}" not in st.session_state:
+                        # Get HV for the latest available date to use as 'constant'
+                        from src.market_data import get_stock_history_vol
+                        _, hv_const, _ = get_stock_history_vol(t_curr, "2025-12-17") # Dataset max date
+                        st.session_state[f"constant_hv_{t_curr}"] = hv_const
+                    
+                    curr_hv = st.session_state.get(f"constant_hv_{t_curr}", curr_hv)
+
+                udata[1].metric(
+                    "Historical Volatility (1Y)", 
+                    f"{curr_hv*100:.2f}%",
+                    help="Historical volatility of the underlying asset is held constant in this app"
+                )
             else:
                  st.warning("Underlying Data Not Available")
             
@@ -909,9 +940,11 @@ with tabs[4]:
                     fig.update_layout(title=f"IV vs {x_label}", xaxis_title=x_label, yaxis_title="Implied Volatility", template="plotly_dark")
                     st.plotly_chart(fig, width="stretch")
             else:
-                st.info("Click 'Generate Volatility Smile' to fetch neighbor strikes.")
+                if st.session_state.get("data_mode") == "Live API":
+                    st.info("Click 'Generate Volatility Smile' to fetch neighbor strikes.")
         else:
-             st.info("Select parameters and click Fetch Data.")
+             if st.session_state.get("data_mode") == "Live API":
+                st.info("Select parameters and click Fetch Data.")
 
 # --- TAB 6: Volatility Surface ---
 with tabs[5]:
@@ -924,9 +957,18 @@ with tabs[5]:
         if st.session_state.get("data_mode") == "Preloaded Dataset":
             ticker = st.selectbox("Ticker", ["AAPL", "NVDA", "SPY"], key="surf_ticker").upper()
             
+            # Date Selection (Moved below ticker)
+            c_d1, c_d2 = st.columns(2)
+            end_date_default = datetime(2025, 12, 17).date()
+            start_date_default = end_date_default - timedelta(days=15)
+            
+            surf_end_date = c_d2.date_input("End Date", value=end_date_default, min_value=datetime(2024, 12, 18).date(), max_value=datetime(2025, 12, 17).date(), key="surf_analysis_end")
+            surf_start_date = c_d1.date_input("Start Date", value=start_date_default, min_value=datetime(2024, 12, 18).date(), max_value=surf_end_date - timedelta(days=1), key="surf_analysis_start")
+
             c_exp1, c_exp2 = st.columns(2)
-            # Locked Expiration
-            exp_date = c_exp1.date_input("Expiration", value=datetime(2026, 2, 20), disabled=True, key="surf_exp")
+            # Locked Expiration - Display as 2026/02/20
+            c_exp1.text_input("Expiration", value="2026/02/20", disabled=True, key="surf_exp_disp")
+            exp_date = datetime(2026, 2, 20).date()
             op_type = c_exp2.selectbox("Type", ["C", "P"], key="surf_op_type")
             
             # Locked Central Strike based on Ticker
@@ -967,6 +1009,7 @@ with tabs[5]:
                 with st.spinner("Fetching data from Massive (Multi-Strike)..."):
                     
                     # Strikes Scope: Center and Neighbors
+                    # Strikes Scope: Center and Neighbors (Fixed at 5)
                     strikes_to_fetch = [strike - 10, strike - 5, strike, strike + 5, strike + 10]
                     
                     # 1. Fetch Underlying ONCE for the range
@@ -999,10 +1042,13 @@ with tabs[5]:
                                      d_date = row["Date"].date()
                                      if d_date in u_data:
                                          S_t = u_data[d_date]
-                                         T_t = (pd.to_datetime(exp_date).date() - d_date).days / 365.0
-                                         if T_t < 0.001: T_t = 0.001
                                          
-                                         iv_t, iv_err_t = implied_volatility(row["Close"], S_t, k_curr, T_t, 0.05, op_type)
+                                         if "Implied Volatility" in row:
+                                             iv_t = row["Implied Volatility"]
+                                         else:
+                                             T_t = (pd.to_datetime(exp_date).date() - d_date).days / 365.0
+                                             if T_t < 0.001: T_t = 0.001
+                                             iv_t, _ = implied_volatility(row["Close"], S_t, k_curr, T_t, 0.05, op_type)
                                          
                                          if iv_t is not None:
                                              all_surface_data.append({
@@ -1025,20 +1071,17 @@ with tabs[5]:
                     else:
                         st.error(f"Underlying fetch error: {u_err}")
         else:
+            # Preloaded Mode: Action Button
             st.divider()
-            st.subheader("Surface Generation")
-            
-            c_d1, c_d2 = st.columns(2)
-            # Default to last 30 days of dataset
-            end_date_default = datetime(2025, 12, 17)
-            start_date_default = end_date_default - timedelta(days=15)
-            
-            surf_end_date = c_d2.date_input("End Date", value=end_date_default, min_value=datetime(2024, 12, 18), max_value=datetime(2025, 12, 17), key="surf_analysis_end")
-            surf_start_date = c_d1.date_input("Start Date", value=start_date_default, min_value=datetime(2024, 12, 18), max_value=surf_end_date - timedelta(days=1), key="surf_analysis_start")
-            
-            if st.button("Generate Volatility Surface", key="surf_gen_preloaded"):
+            if st.button("Update Data & Generate Surface", key="surf_gen_preloaded"):
+                # Clear conflicting smile data AND previous surface plots/tables
+                if "center_data" in st.session_state: del st.session_state["center_data"]
+                if "smile_data" in st.session_state: del st.session_state["smile_data"]
+                if "surface_data" in st.session_state: del st.session_state["surface_data"]
+                if "custom_data_table" in st.session_state: del st.session_state["custom_data_table"]
+
                 with st.spinner("Processing offline dataset..."):
-                    # Strikes to fetch
+                    # Strikes scope
                     strikes_to_fetch = [strike - 20, strike - 10, strike - 5, strike, strike + 5, strike + 10, strike + 20]
                     
                     # 1. Fetch Underlying Range
@@ -1062,9 +1105,14 @@ with tabs[5]:
                                     d_date = row["Date"].date()
                                     if d_date in u_data:
                                         S_t = u_data[d_date]
-                                        T_t = (pd.to_datetime(exp_date).date() - d_date).days / 365.0
-                                        if T_t < 0.001: T_t = 0.001
-                                        iv_t, iv_err_t = implied_volatility(row["Close"], S_t, k_curr, T_t, 0.05, op_type)
+                                        
+                                        if "Implied Volatility" in row:
+                                            iv_t = row["Implied Volatility"]
+                                        else:
+                                            T_t = (pd.to_datetime(exp_date).date() - d_date).days / 365.0
+                                            if T_t < 0.001: T_t = 0.001
+                                            iv_t, _ = implied_volatility(row["Close"], S_t, k_curr, T_t, 0.05, op_type)
+                                        
                                         if iv_t is not None:
                                             all_surface_data.append({
                                                 "Date": row["Date"], "Underlying": S_t, "OptionPrice": row["Close"],
@@ -1082,7 +1130,8 @@ with tabs[5]:
                         st.error(f"Underlying range error: {u_err}")
 
     with col_s_input:
-        if st.session_state.get("market_mode") == "Custom Timeframe" and "custom_data_table" in st.session_state:
+        # Step 2: Generate Surface (Live Mode only, Preloaded does it in one step)
+        if st.session_state.get("data_mode") == "Live API" and st.session_state.get("market_mode") == "Custom Timeframe" and "custom_data_table" in st.session_state:
              st.divider()
              if st.button("Generate Volatility Surface", key="surf_gen"):
                  st.session_state["surface_data"] = st.session_state["custom_data_table"]
@@ -1124,92 +1173,92 @@ with tabs[5]:
                 st.divider()
                 st.subheader("Implied Volatility Surface")
                 
-                # --- Advanced Surface: TTE vs Moneyness vs IV ---
+                # --- Advanced Surface: 2D Interpolation (TTE vs Moneyness vs IV) ---
                 try:
                     # 1. Prepare Data
-                    # Calculate Time To Expiration (Years)
-                    df_surf['DateObj'] = pd.to_datetime(df_surf['Date'])
+                    df_clean = df_surf.copy()
+                    df_clean['DateObj'] = pd.to_datetime(df_clean['Date'])
                     exp_date_obj = pd.to_datetime(exp_date)
-                    df_surf['TimeToExp'] = (exp_date_obj - df_surf['DateObj']).dt.days / 365.0
+                    # Use .dt.days to get integer days, then float division
+                    df_clean['TimeToExp'] = (exp_date_obj - df_clean['DateObj']).dt.days / 365.0
                     
-                    # Ensure Moneyness is present (it should be)
-                    # Moneyness = Strike / Underlying
+                    # Filter for validity
+                    df_clean = df_clean.replace([np.inf, -np.inf], np.nan).dropna(subset=["IV", "Moneyness", "TimeToExp"])
+                    df_clean = df_clean[df_clean['TimeToExp'] > 0]
                     
-                    # 2. Create Regular Grid for Surfaces
-                    # Since Moneyness varies per day for fixed strikes, we must interpolate onto a fixed Moneyness grid.
-                    
-                    # Define Grid Ranges
-                    min_mon = df_surf["Moneyness"].min()
-                    max_mon = df_surf["Moneyness"].max()
-                    # Add buffer for visuals
-                    grid_moneyness = np.linspace(min_mon * 0.98, max_mon * 1.02, 30) 
-                    
-                    # Get Unique TimeToExp (sorted descending for Right->Left flow? No, standard axis is fine)
-                    # User: "Date progressing from start to end from right to left"
-                    # Start Date = High TTE. End Date = Low TTE.
-                    # Standard Axis: Low(Left) -> High(Right).
-                    # So TTE axis naturally puts End Date(Low) on Left and Start Date(High) on Right.
-                    unique_tte = sorted(df_surf['TimeToExp'].unique())
-                    
-                    z_data = [] # Rows = TTE, Cols = Moneyness
-                    
-                    from scipy.interpolate import interp1d
-                    
-                    for t in unique_tte:
-                        # Get data for this specific time slice
-                        df_slice = df_surf[df_surf['TimeToExp'] == t]
+                    if len(df_clean) < 4:
+                        st.warning("Insufficient data points to form a surface. Need at least 4 valid points.")
+                    else:
+                        from scipy.interpolate import griddata
                         
-                        if len(df_slice) < 2:
-                            # Not enough points to interpolate, fill with NaNs or nearest
-                            row_iv = [np.nan] * len(grid_moneyness)
+                        # Define regular grid coordinates
+                        min_mon, max_mon = df_clean["Moneyness"].min(), df_clean["Moneyness"].max()
+                        min_tte, max_tte = df_clean["TimeToExp"].min(), df_clean["TimeToExp"].max()
+                        
+                        # Check for meaningful spread
+                        if max_mon == min_mon or max_tte == min_tte:
+                            st.info("Forming a 3D surface requires a spread across both Strikes and Time. Plotting as 2D fallback.")
+                            # Fallback Scatter Plot
+                            fig = go.Figure(data=[go.Scatter(
+                                x=df_clean["Moneyness"], y=df_clean["IV"], mode='markers', 
+                                marker=dict(size=8, color=df_clean["TimeToExp"], colorscale='Viridis', showscale=True)
+                            )])
+                            fig.update_layout(title="IV vs Moneyness (Single Slice Fallback)", xaxis_title="Log Moneyness", yaxis_title="IV", template="plotly_dark")
+                            st.plotly_chart(fig, width="stretch")
                         else:
-                            # Interpolate IV vs Moneyness for this day
-                            f_interp = interp1d(
-                                df_slice["Moneyness"], 
-                                df_slice["IV"], 
-                                kind='linear', 
-                                bounds_error=False, 
-                                fill_value="extrapolate" 
-                            )
-                            row_iv = f_interp(grid_moneyness)
+                            # 2. Interpolate Scattered Points to Regular Grid
+                            # grid_x_1d = cols (Moneyness), grid_y_1d = rows (TTE)
+                            grid_x_1d = np.linspace(min_mon, max_mon, 30)
+                            grid_y_1d = np.linspace(min_tte, max_tte, 30)
+                            grid_x, grid_y = np.meshgrid(grid_x_1d, grid_y_1d)
                             
-                        z_data.append(row_iv)
-                    
-                    z_matrix = np.array(z_data)
-                    
-                    # 3. Plot
-                    # X = Moneyness Grid (Left -> Right)
-                    # Y = TTE (Left=Low=End, Right=High=Start)
-                    
-                    fig = go.Figure(data=[go.Surface(
-                        z=z_matrix,
-                        x=grid_moneyness,
-                        y=unique_tte,
-                        colorscale='Viridis',
-                        opacity=0.9,
-                        contours_z=dict(show=True, usecolormap=True, highlightcolor="limegreen", project_z=True)
-                    )])
-                    
-                    fig.update_layout(
-                        title=f"IV Surface (Moneyness vs TTE)",
-                        scene=dict(
-                            xaxis=dict(title='Log Moneyness ( log of (K/S) )', autotypenumbers="strict"),
-                            yaxis=dict(title='Time to Expiration (Years)', autotypenumbers="strict"),
-                            zaxis=dict(title='Implied Volatility', autotypenumbers="strict"),
-                            camera=dict(eye=dict(x=1.5, y=-1.5, z=0.5)),
-                            aspectratio=dict(x=1, y=1, z=1)
-                        ),
-                        template="plotly_dark",
-                        margin=dict(l=0, r=0, b=0, t=40),
-                        height=700
-                    )
-                    
-                    st.plotly_chart(fig, width="stretch")
-                    
+                            points = df_clean[["Moneyness", "TimeToExp"]].values
+                            values = df_clean["IV"].values
+                            
+                            # Use griddata - try 'linear' first, then 'nearest' for coverage
+                            grid_z = griddata(points, values, (grid_x, grid_y), method='linear')
+                            
+                            # Fallback for gaps: fill with nearest
+                            grid_z_nearest = griddata(points, values, (grid_x, grid_y), method='nearest')
+                            if np.isnan(grid_z).any():
+                                if np.isnan(grid_z).all():
+                                    grid_z = grid_z_nearest
+                                else:
+                                    mask = np.isnan(grid_z)
+                                    grid_z[mask] = grid_z_nearest[mask]
+                            
+                            if np.isnan(grid_z).all():
+                                 st.error("Surface interpolation failed (All NaNs). Likely collinear data.")
+                            else:
+                                # 3. Plot
+                                fig = go.Figure(data=[go.Surface(
+                                    z=grid_z,
+                                    x=grid_x_1d,
+                                    y=grid_y_1d,
+                                    colorscale='Viridis',
+                                    opacity=0.9,
+                                    contours_z=dict(show=True, usecolormap=True, highlightcolor="limegreen", project_z=True)
+                                )])
+                                
+                                fig.update_layout(
+                                    title=f"IV Surface (Moneyness vs TTE)",
+                                    scene=dict(
+                                        xaxis=dict(title='Log Moneyness ( log(K/S) )'),
+                                        yaxis=dict(title='Time to Expiration (Years)'),
+                                        zaxis=dict(title='Implied Volatility'),
+                                        camera=dict(eye=dict(x=1.5, y=-1.5, z=0.5)),
+                                        aspectratio=dict(x=1, y=1, z=1)
+                                    ),
+                                    template="plotly_dark",
+                                    margin=dict(l=0, r=0, b=0, t=40),
+                                    height=700
+                                )
+                                st.plotly_chart(fig, width="stretch")
+
                 except Exception as e:
                     st.error(f"Error creating surface plot: {e}")
                     import traceback
                     st.text(traceback.format_exc())
-                    st.write("Raw Data Head:", df_surf.head())
+                    st.write("Raw Data Summary:", df_surf.describe())
         else:
              st.info("Select parameters and click Fetch Data.")
