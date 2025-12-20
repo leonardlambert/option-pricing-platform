@@ -712,7 +712,7 @@ with tabs[4]:
             ticker = st.text_input("Ticker", value="AAPL", key="smile_ticker").upper()
             
             c_exp1, c_exp2 = st.columns(2)
-            exp_date = c_exp1.date_input("Expiration", value=datetime.now() + timedelta(days=30), key="smile_exp")
+            exp_date = c_exp1.date_input("Expiration", value=datetime(2026, 2, 20).date(), key="smile_exp")
             op_type = c_exp2.selectbox("Type", ["C", "P"], key="smile_op_type")
             
             strike = st.number_input("Central Strike", value=275.0, step=1.0, key="smile_strike")
@@ -790,13 +790,13 @@ with tabs[4]:
                     exp_date = st.session_state.get("smile_exp")
                     op_type = st.session_state.get("smile_op_type", "C")
                     
-                    # Strikes to fetch: [-10, +10]
-                    strikes_to_fetch = [
-                        center["Strike"] - 10, 
-                        center["Strike"] - 5, 
-                        center["Strike"] + 5, 
-                        center["Strike"] + 10
-                    ]
+                    # Relative strikes: +/- 15% and +/- 5% of spot, rounded up to multiple of 5
+                    rel_offsets = [0.85, 0.95, 1.05, 1.15]
+                    strikes_to_fetch = sorted(list(set([int(np.ceil((S_real * r) / 5.0) * 5) for r in rel_offsets])))
+                    
+                    # Remove center strike if it's already in the neighbors to avoid double fetching
+                    if center["Strike"] in strikes_to_fetch:
+                        strikes_to_fetch.remove(center["Strike"])
                     
                     smile_rows = []
                     # Helper for moneyness (Log Moneyness)
@@ -982,7 +982,7 @@ with tabs[5]:
             ticker = st.text_input("Ticker", value="AAPL", key="surf_ticker").upper()
             
             c_exp1, c_exp2 = st.columns(2)
-            exp_date = c_exp1.date_input("Expiration", value=datetime.now() + timedelta(days=30), key="surf_exp")
+            exp_date = c_exp1.date_input("Expiration", value=datetime(2026, 2, 20).date(), key="surf_exp")
             op_type = c_exp2.selectbox("Type", ["C", "P"], key="surf_op_type")
             
             strike = st.number_input("Central Strike", value=275.0, step=1.0, key="surf_strike")
@@ -1011,10 +1011,6 @@ with tabs[5]:
                 
                 with st.spinner("Fetching data from Massive (Multi-Strike)..."):
                     
-                    # Strikes Scope: Center and Neighbors
-                    # Strikes Scope: Center and Neighbors (Fixed at 5)
-                    strikes_to_fetch = [strike - 10, strike - 5, strike, strike + 5, strike + 10]
-                    
                     # 1. Fetch Underlying ONCE for the range
                     u_data, u_err = get_underlying_history_range(
                         ticker, 
@@ -1023,6 +1019,16 @@ with tabs[5]:
                     )
                     
                     if u_data:
+                        # Determine Spot (Latest Close in range) for relative offsets
+                        latest_date = max(u_data.keys())
+                        S_spot = u_data[latest_date]
+                        
+                        # Relative strikes: central strike + neighbors at +/- 15% & +/- 5% of spot
+                        # Rounded up to nearest multiple of 5
+                        rel_offsets = [0.85, 0.95, 1.05, 1.15]
+                        neighbors = [int(np.ceil((S_spot * r) / 5.0) * 5) for r in rel_offsets]
+                        strikes_to_fetch = sorted(list(set([strike] + neighbors)))
+                        
                         all_surface_data = []
                         
                         progress_bar = st.progress(0, text="Fetching Strikes...")
