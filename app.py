@@ -49,7 +49,7 @@ st.markdown("""
 
 # Data Source & API Key Management
 with st.sidebar:
-    st.subheader("App settings")
+    st.subheader("Data Mode Settings")
     
     # 1. Data Source Selection
     current_mode = st.session_state.get("data_mode", "Live API")
@@ -57,7 +57,7 @@ with st.sidebar:
         "Data Source",
         ["Live API", "Preloaded Dataset"],
         index=0 if current_mode == "Live API" else 1,
-        help="Switch between live market data and offline preloaded dataset."
+        help="Switch between market data and offline preloaded dataset."
     )
     
     if new_mode != current_mode:
@@ -126,10 +126,10 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("Option Pricing & Risk Management")
+st.title("Option Pricing & Scenario Analysis Platform")
 
 # Tabs
-tabs = st.tabs(["Pricing & Greeks", "Spread Visualizer", "PnL Visualization", "Stress Test", "Volatility Smile", "Volatility Surface"])
+tabs = st.tabs(["Option Pricing & Greeks", "Strategy Builder", "Strategy PnL Distribution", "Strategy Stress Testing", "Volatility Smile", "Volatility Surface"])
 
 # --- TAB 1: Single Option Pricing ---
 with tabs[0]:
@@ -188,15 +188,15 @@ with tabs[1]:
     col_setup, col_plot = st.columns([1, 2])
     
     with col_setup:
-        st.subheader("Market Params")
+        st.subheader("Market Parameters")
         
         # Model Selection
-        pricing_model = st.selectbox("Model", ["Black-Scholes", "Variance Gamma", "Merton Jump Diffusion"], key="spread_model")
+        pricing_model = st.selectbox("Pricing Model", ["Black-Scholes", "Variance Gamma", "Merton Jump Diffusion"], key="spread_model")
         
-        S0_spread = st.number_input("Spot", value=100.0, key="s_spread")
-        T_spread = st.number_input("Maturity", value=1.0, key="t_spread")
-        r_spread = st.number_input("Rate", value=0.05, key="r_spread")
-        sigma_spread = st.number_input("Vol", value=0.2, key="v_spread")
+        S0_spread = st.number_input("Spot Price (S)", value=100.0, key="s_spread")
+        T_spread = st.number_input("Time to Maturity (T)", value=1.0, key="t_spread")
+        r_spread = st.number_input("Risk-Free Rate (r)", value=0.05, key="r_spread")
+        sigma_spread = st.number_input("Volatility (σ)", value=0.2, key="v_spread")
         
         # Model Specific Params
         model_params = {}
@@ -208,14 +208,14 @@ with tabs[1]:
             model_params["mu_j"] = st.number_input("Mean Jump", value=-0.05, key="mjd_muj")
             model_params["sigma_j"] = st.number_input("Jump Vol", value=0.2, key="mjd_sigmaj")
         
-        st.subheader("Legs")
+        st.subheader("Strategy Legs")
         num_legs = st.number_input("Legs Count", 1, 6, 2)
         legs = []
         for i in range(num_legs):
             c_type, c_strike, c_pos = st.columns(3)
-            l_type = c_type.selectbox(f"Type {i+1}", ["C", "P"], key=f"l_type_{i}")
-            l_strike = c_strike.number_input(f"Strike {i+1}", 50.0, 200.0, 100.0, key=f"l_strike_{i}")
-            l_pos = c_pos.selectbox(f"Pos {i+1}", [1, -1], format_func=lambda x: "Long" if x==1 else "Short", key=f"l_pos_{i}")
+            l_type = c_type.selectbox("Type", ["C", "P"], key=f"l_type_{i}")
+            l_strike = c_strike.number_input("Strike", 50.0, 200.0, 100.0, key=f"l_strike_{i}")
+            l_pos = c_pos.selectbox("Position", [1, -1], format_func=lambda x: "Long" if x==1 else "Short", key=f"l_pos_{i}")
             legs.append({"type": l_type, "strike": l_strike, "position": l_pos})
             
         st.divider()
@@ -324,7 +324,7 @@ with tabs[1]:
 with tabs[2]:
     
     if not st.session_state.book:
-        st.warning("Book is empty. Add strategies in 'Spread Visualizer' first.")
+        st.warning("Book is empty. Add strategies in 'Strategy Builder' tab first.")
     else:
         # Selection state
         if "selected_strategies" not in st.session_state:
@@ -460,10 +460,10 @@ with tabs[2]:
                     with c_metrics2:
                         st.metric("CVaR (95%)", f"{np.mean(results['pnl'][results['pnl'] <= np.percentile(results['pnl'], 5)]):.2f}")
 
-# --- TAB 4: Stress Test ---
+#TAB 4: Stress Testing
 with tabs[3]:
     if not st.session_state.book:
-        st.warning("Book is empty. Add strategies in 'Spread Visualizer' first.")
+        st.warning("Book is empty. Add strategies in 'Strategy Builder' tab first.")
     else:
         # Selection state (shared with PnL Tab)
         if "selected_strategies" not in st.session_state:
@@ -502,7 +502,7 @@ with tabs[3]:
         
         c_p1, c_p2 = st.columns([1, 2])
         with c_p1:
-            st.subheader("Stress Parameters")
+            st.subheader("Scenario Parameters")
             
             # --- Quick Scenarios ---
             st.caption("Quick Scenarios")
@@ -541,7 +541,7 @@ with tabs[3]:
             time_decay = time_decay_days
 
         with c_p2:
-            st.subheader("Results")
+            st.subheader("Scenario Results")
             selected_indices = [i for i, sel in enumerate(st.session_state.selected_strategies) if sel]
             
             if not selected_indices:
@@ -572,13 +572,13 @@ with tabs[3]:
                 
                 c_m1, c_m2 = st.columns(2)
                 with c_m1:
-                    st.write(f"**Price Before Stress**: ${price_before:.2f}")
+                    st.write(f"**Old Price**: ${price_before:.2f}")
                 with c_m2:
-                    st.write(f"**Price After Stress**: ${price_after:.2f}")
+                    st.write(f"**New Price**: ${price_after:.2f}")
 
                 # --- PnL Attribution ---
                 st.divider()
-                st.subheader("PnL Attribution (Taylor Approximation)")
+                st.subheader("PnL Attribution (Using Taylor Approximation)")
                 
                 attr_totals = {"Delta": 0.0, "Gamma": 0.0, "Vega": 0.0, "Theta": 0.0}
                 
@@ -619,6 +619,7 @@ with tabs[4]:
     col_input, col_view = st.columns([1, 2])
     
     with col_input:
+
         st.subheader("Market Parameters")
         if st.session_state.get("data_mode") == "Preloaded Dataset":
             ticker = st.selectbox("Ticker", ["AAPL", "NVDA", "SPY"], key="smile_ticker").upper()
@@ -725,6 +726,7 @@ with tabs[4]:
                 # Clear conflicting surface data if any
                 if "surface_data" in st.session_state: del st.session_state["surface_data"]
                 if "custom_data_table" in st.session_state: del st.session_state["custom_data_table"]
+                if "smile_data" in st.session_state: del st.session_state["smile_data"]
                 
                 with st.spinner("Fetching data from Massive..."):
                     # --- STEP 1: Central Strike Only ---
@@ -866,7 +868,7 @@ with tabs[4]:
                 udata[1].metric(
                     "Historical Volatility (1Y)", 
                     f"{curr_hv*100:.2f}%",
-                    help="Historical volatility of the underlying asset is held constant in this app"
+                    help="The value displayed here is the historical volatility of the underlying asset for the last year - It is hypothesized to be constant - This is a model simplification for ease of use"
                 )
             else:
                  st.warning("Underlying Data Not Available")
@@ -955,6 +957,8 @@ with tabs[5]:
     col_s_input, col_s_view = st.columns([1, 2])
     
     with col_s_input:
+        # --- "Enable API Mode" Button (Surface Tab) ---
+        
         st.subheader("Market Parameters")
         if st.session_state.get("data_mode") == "Preloaded Dataset":
             ticker = st.selectbox("Ticker", ["AAPL", "NVDA", "SPY"], key="surf_ticker").upper()
@@ -1162,7 +1166,6 @@ with tabs[5]:
                 
                 st.subheader(f"Historical Data ({d_min} to {d_max})")
                 st.caption(f"Showing data for Center Strike: {center_val}")
-                
                 st.dataframe(
                     df_table[["Date", "Underlying", "OptionPrice", "Moneyness", "IV"]].style.format({
                         "Underlying": "{:.2f}",
@@ -1170,7 +1173,8 @@ with tabs[5]:
                         "Moneyness": "{:.4f}",
                         "IV": "{:.2%}"
                     }), 
-                    width="stretch"
+                    width="stretch",
+                    hide_index=True
                 )
             
             # State 2: Surface Plot (if generated)
