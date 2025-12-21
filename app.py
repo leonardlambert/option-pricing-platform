@@ -1,10 +1,11 @@
+#imports
 import streamlit as st
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
 import plotly.graph_objects as go
 
-# Local Imports
+#local imports
 from src.dashboard_utils import initialize_session_state, add_strategy_to_book, reset_book, delete_strategy, interpolate_volatility
 from pricing.pricing import black_scholes_price, compute_greeks, implied_volatility, calculate_pnl_attribution
 from pricing.FFT_pricer import fft_pricer
@@ -14,11 +15,11 @@ from src.simulation import simulate_gbm_paths, simulate_vg_paths, simulate_mjd_p
 from src.market_data import get_option_aggregates, get_option_previous_close, get_stock_history_vol, get_underlying_history_range, validate_api_key, get_available_dates, get_all_preloaded_options
 from pricing.finite_differences import compute_greeks_fd
 
-# Page Config
+#config
 st.set_page_config(page_title="Option Pricing & Risk Management", layout="wide", page_icon="📈", initial_sidebar_state="collapsed")
 initialize_session_state()
 
-# Compact CSS & Theme Support
+#style
 st.markdown("""
     <style>
         /* Serious Font Import (Inter) */
@@ -48,11 +49,11 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Data Source & API Key Management
+#sidebar
 with st.sidebar:
     st.subheader("Data Mode Settings")
     
-    # 1. Data Source Selection
+    #data mode selector
     current_mode = st.session_state.get("data_mode", "Live API")
     new_mode = st.radio(
         "Data Source",
@@ -63,14 +64,14 @@ with st.sidebar:
     
     if new_mode != current_mode:
         st.session_state["data_mode"] = new_mode
-        # Clear data on switch
+        #clear data on switch
         for k in ["center_data", "smile_data", "surface_data", "custom_data_table", "market_mode", "underlying_S", "underlying_HV"]:
             if k in st.session_state: del st.session_state[k]
         st.rerun()
     
     st.divider()
     
-    # 2. API Key Management (only if Live API is selected)
+    #live api key section
     if st.session_state["data_mode"] == "Live API":
         st.subheader("Massive / Polygon API key")
         user_key = st.text_input("Enter API Key", type="password", help="Enter your Massive API key here to fetch live market data.")
@@ -100,7 +101,7 @@ with st.sidebar:
         st.info("Currently using: **Preloaded Dataset**")
         st.caption("No API key required in this mode.")
 
-# Apply Light Theme CSS (Default)
+#apply light theme css
 st.markdown("""
     <style>
         .stApp {
@@ -129,12 +130,11 @@ st.markdown("""
 
 st.title("Option Pricing & Scenario Analysis Platform")
 
-# Tabs
+#sections list
 tabs = st.tabs(["Option Pricing & Greeks", "Strategy Builder", "Strategy PnL Distribution", "Strategy Stress Testing", "Volatility Smile", "Volatility Surface"])
 
-# --- TAB 1: Single Option Pricing ---
+#TAB 1 : single option pricing
 with tabs[0]:
-    # No subheader
     
     col1, col2, col3, col4 = st.columns(4)
     with col1:
@@ -149,7 +149,7 @@ with tabs[0]:
     with col4:
         model = st.selectbox("Pricing Model", ["Black-Scholes-Merton", "Variance Gamma", "Merton"])
         
-        # Model information help box
+        #inof about the models
         model_info = {
             "Black-Scholes-Merton": "**Stochastic Family:** GBM | **Pricing Logic:** Closed Form",
             "Variance Gamma": "**Stochastic Family:** Lévy Process | **Pricing Logic:** Fast Fourier Transform",
@@ -161,7 +161,7 @@ with tabs[0]:
         st.divider()
         c1, c2 = st.columns(2)
         
-        # 1. Pricing
+        #pricing part
         price = 0.0
         model_params = {}
         use_fd_greeks = False
@@ -169,35 +169,35 @@ with tabs[0]:
         if model == "Black-Scholes-Merton":
             price = black_scholes_price(S, K, T, r, sigma, option_type)
         elif model == "Variance Gamma":
-            # Hardcoded VG params for demo, or add inputs
+            #hardcoded VGparams for now
             theta, nu = -0.1, 0.2 
             price = fft_pricer(K, S, T, r, phi_vg, args=(sigma, theta, nu), call=(option_type=="C"))
             st.caption(f"Used VG Parameters: θ = {theta}, ν = {nu}")
             model_params = {'theta': theta, 'nu': nu}
             use_fd_greeks = True
         elif model == "Merton":
-            # Hardcoded Merton params
+            #hardcoded merton params for now
             lamb, mu_j, sigma_j = 0.1, -0.05, 0.2
             price = fft_pricer(K, S, T, r, phi_merton, args=(sigma, lamb, mu_j, sigma_j), call=(option_type=="C"))
             st.caption(f"Used Merton Parameters: λ = {lamb}, μ_j = {mu_j}, σ_j = {sigma_j}")
             model_params = {'lamb': lamb, 'mu_j': mu_j, 'sigma_j': sigma_j}
             use_fd_greeks = True
             
-        # 2. Greeks computation
+        #compute greeks
         if use_fd_greeks:
-            # Use finite differences for non-BSM models
+            #finite difference greeks for exotic price processes
             model_name = "VG" if "Variance Gamma" in model else "Merton"
             greeks = compute_greeks_fd(S, K, T, r, sigma, option_type, model_name, model_params)
             delta, gamma, theta_g, vega, rho = greeks['delta'], greeks['gamma'], greeks['theta'], greeks['vega'], greeks['rho']
         else:
-            # Use analytical Greeks for BSM
+            #for BSM use closed form greeks
             delta, gamma, theta_g, vega, rho = compute_greeks(S, K, T, r, sigma, option_type)
         
         with c1:
             st.metric("Option Price", f"${price:.4f}")
             
         with c2:
-            # Add disclaimer for FD Greeks
+            #FD disclaimer
             if use_fd_greeks:
                 st.caption("Greeks computed using finite differences", help="Finite difference approximation is used for models without analytical Greek formulas / Exotic Price Processes. Results are numerical approximations.")
             
@@ -208,7 +208,7 @@ with tabs[0]:
             g_col2.write(f"**Vega**: {vega:.4f}")
             g_col2.write(f"**Rho**: {rho:.4f}")
 
-# --- TAB 2: Spread Visualizer ---
+#TAB 2 : strategy builder
 with tabs[1]:
     
     col_setup, col_plot = st.columns([1, 2])
@@ -216,7 +216,7 @@ with tabs[1]:
     with col_setup:
         st.subheader("Market Parameters")
         
-        # Fixed to Black-Scholes only
+        #fixed to BSM for now
         pricing_model = "Black-Scholes"
         
         S0_spread = st.number_input("Spot Price (S)", value=100.0, key="s_spread")
@@ -237,7 +237,7 @@ with tabs[1]:
         st.divider()
         strat_name = st.text_input("Strategy Name", value="My Strategy", placeholder="e.g. Iron Condor")
         if st.button("💾 Save Strategy to Book"):
-            # Calculate and attach premiums to legs (using Black-Scholes)
+
             save_legs = []
             for leg in legs:
                 p = black_scholes_price(S0_spread, leg["strike"], T_spread, r_spread, sigma_spread, leg["type"])
@@ -249,16 +249,16 @@ with tabs[1]:
             st.success(f"Strategy '{strat_name}' saved with leg premiums!")
 
     with col_plot:
-        # Calculation
-        S_range = np.linspace(S0_spread * 0.5, S0_spread * 1.5, 50) # Reduced points for FFT speed
+        
+        S_range = np.linspace(S0_spread * 0.5, S0_spread * 1.5, 50) #linspace for FFT computation
         spread_vals = np.zeros_like(S_range)
         payoff_vals = np.zeros_like(S_range)
         
-        # Aggregate Greeks (Only for BSM)
+        #aggregate greeks (only for BSM)
         greeks_agg = {k: np.zeros_like(S_range) for k in ["Delta", "Gamma", "Theta", "Vega", "Rho"]}
         net_premium = 0.0
         
-        # Progress Bar for slower FFT
+        #progress bar if needed
         progress_text = "Pricing Spread..."
         my_bar = st.progress(0, text=progress_text)
         
@@ -266,18 +266,16 @@ with tabs[1]:
         step_ctr = 0
         
         for leg in legs:
-            # 1. Net Premium (Price at S0)
+            
             leg_price = black_scholes_price(S0_spread, leg["strike"], T_spread, r_spread, sigma_spread, leg["type"])
             net_premium += leg["position"] * leg_price
             
-            # 2. Range Calculation
             for idx, s_i in enumerate(S_range):
-                # Update progress
+
                 step_ctr += 1
                 if step_ctr % 10 == 0:
                     my_bar.progress(min(step_ctr / total_steps, 1.0), text=progress_text)
 
-                # Pricing at s_i (Black-Scholes)
                 p_i = black_scholes_price(s_i, leg["strike"], T_spread, r_spread, sigma_spread, leg["type"])
                 d, g, th, v, rh = compute_greeks(s_i, leg["strike"], T_spread, r_spread, sigma_spread, leg["type"])
                 greeks_agg["Delta"][idx] += leg["position"] * d
@@ -288,7 +286,6 @@ with tabs[1]:
                 
                 spread_vals[idx] += leg["position"] * p_i
                 
-                # Payoff at maturity (Independent of model)
                 intrinsic = max(0, s_i - leg["strike"]) if leg["type"] == "C" else max(0, leg["strike"] - s_i)
                 payoff_vals[idx] += leg["position"] * intrinsic
 
@@ -304,17 +301,16 @@ with tabs[1]:
             
         st.info(f"Net Premium (Black-Scholes): ${net_premium:.2f}")
 
-# --- TAB 3: PnL Visualization ---
+#TAB 3 : strategy PnL distribution
 with tabs[2]:
     
     if not st.session_state.book:
         st.warning("Book is empty. Add strategies in 'Strategy Builder' tab first.")
     else:
-        # Selection state
+        
         if "selected_strategies" not in st.session_state:
             st.session_state.selected_strategies = [True] * len(st.session_state.book)
         
-        # Adjust length if book was modified outside
         if len(st.session_state.selected_strategies) != len(st.session_state.book):
             st.session_state.selected_strategies = [True] * len(st.session_state.book)
 
@@ -338,7 +334,7 @@ with tabs[2]:
                         st.rerun()
                 with c_details:
                     st.write(f"**Parameters**: {params}")
-                    # Leg Details
+                    
                     leg_data = []
                     for leg in strat["legs"]:
                         pos_str = "Long (+1)" if leg["position"] == 1 else "Short (-1)"
@@ -355,14 +351,14 @@ with tabs[2]:
         if entries_to_delete:
             for i in sorted(entries_to_delete, reverse=True):
                 delete_strategy(i)
-                # Remove from selection state too
+                
                 if "selected_strategies" in st.session_state and len(st.session_state.selected_strategies) > i:
                     st.session_state.selected_strategies.pop(i)
             if "pnl_results" in st.session_state:
                 del st.session_state["pnl_results"]
             st.rerun()
 
-        if st.button("🗑️ Clear Entire Book"):
+        if st.button("Clear Entire Book"):
             reset_book()
             if "selected_strategies" in st.session_state:
                 st.session_state.selected_strategies = []
@@ -371,7 +367,7 @@ with tabs[2]:
             st.rerun()
             
         st.divider()
-        # Simulation (only if book not empty after deletes)
+        #simulation part !!! needs at least one strategy selected
         if st.session_state.book:
             selected_indices = [i for i, sel in enumerate(st.session_state.selected_strategies) if sel]
             
@@ -387,7 +383,7 @@ with tabs[2]:
                     process = st.selectbox("Process", ["GBM", "Variance Gamma", "Merton Jump Diffusion"])
                     
                 if st.button("Run Monte Carlo"):
-                    # Use the first selected strategy's parameters as base or default
+                    
                     first_strat = st.session_state.book[selected_indices[0]]
                     S0_sim = first_strat["S0"]
                     r_sim = first_strat["r"]
@@ -405,11 +401,11 @@ with tabs[2]:
                         pnl = np.zeros(n_paths)
                         initial_book_value = 0.0
                         
-                        # Only use selected strategies
+                        #use only selected strategies
                         for idx in selected_indices:
                             strat = st.session_state.book[idx]
                             for leg in strat["legs"]:
-                                # Use saved premium if available, else fallback to re-calc
+                                #use saved premium if available, else fallback
                                 p = leg.get("premium", black_scholes_price(strat["S0"], leg["strike"], strat["T"], strat["r"], strat["sigma"], leg["type"]))
                                 initial_book_value += leg["position"] * p
                         
@@ -444,12 +440,12 @@ with tabs[2]:
                     with c_metrics2:
                         st.metric("CVaR (95%)", f"{np.mean(results['pnl'][results['pnl'] <= np.percentile(results['pnl'], 5)]):.2f}")
 
-#TAB 4: Stress Testing
+#TAB 4: strategy stress testing
 with tabs[3]:
     if not st.session_state.book:
         st.warning("Book is empty. Add strategies in 'Strategy Builder' tab first.")
     else:
-        # Selection state (shared with PnL Tab)
+        
         if "selected_strategies" not in st.session_state:
             st.session_state.selected_strategies = [True] * len(st.session_state.book)
         
@@ -488,7 +484,7 @@ with tabs[3]:
         with c_p1:
             st.subheader("Scenario Parameters")
             
-            # --- Quick Scenarios ---
+            #quick scenarios
             st.caption("Quick Scenarios")
             qs_cols = st.columns(5)
             if qs_cols[0].button("Spot Shock"):
@@ -511,7 +507,7 @@ with tabs[3]:
             
             st.divider()
 
-            # Initialize keys if missing
+            #Initialize keys if missing
             if "stress_spot" not in st.session_state: st.session_state.stress_spot = 0.0
             if "stress_vol" not in st.session_state: st.session_state.stress_vol = 0.0
             if "stress_decay" not in st.session_state: st.session_state.stress_decay = 0
@@ -531,7 +527,7 @@ with tabs[3]:
             if not selected_indices:
                 st.warning("Please select at least one strategy to run stress test.")
             else:
-                # Calculate Spread Price Variation
+                #variation computation
                 price_before = 0.0
                 price_after = 0.0
                 days_to_years = time_decay / 365.0
@@ -539,15 +535,13 @@ with tabs[3]:
                 for idx in selected_indices:
                     strat = st.session_state.book[idx]
                     for leg in strat["legs"]:
-                        # Price Before: Sum of saved premiums
+                        
                         price_before += leg["position"] * leg.get("premium", 0.0)
                         
-                        # Price After: Reprice with slider variations
                         new_spot = strat["S0"] * (1 + spot_change)
                         new_vol = max(0.01, strat["sigma"] + vol_change)
                         new_t = max(1e-4, strat["T"] - days_to_years)
                         
-                        # Reprice using BSM for the variation metric
                         p_after = black_scholes_price(new_spot, leg["strike"], new_t, strat["r"], new_vol, leg["type"])
                         price_after += leg["position"] * p_after
 
@@ -560,18 +554,17 @@ with tabs[3]:
                 with c_m2:
                     st.write(f"**New Price**: ${price_after:.2f}")
 
-                # --- PnL Attribution ---
+                #PNL attribution
                 st.divider()
                 st.subheader("PnL Attribution (Using Taylor Approximation)")
                 
                 attr_totals = {"Delta": 0.0, "Gamma": 0.0, "Vega": 0.0, "Theta": 0.0}
                 
-                # We reuse the slider values for attribution
                 for idx in selected_indices:
                     strat = st.session_state.book[idx]
                     dS = strat["S0"] * spot_change
-                    dVol = vol_change # already in points
-                    dT = days_to_years # time passed
+                    dVol = vol_change
+                    dT = days_to_years
                     
                     for leg in strat["legs"]:
                         attr = calculate_pnl_attribution(
@@ -594,9 +587,8 @@ with tabs[3]:
             
 
 
-# --- TAB 5: Volatility Smile ---
+#TAB 5: volatility smile
 with tabs[4]:
-    # st.header("Volatility Smile (Previous Day)")
     
     analysis_date = None
 
@@ -607,10 +599,9 @@ with tabs[4]:
         st.subheader("Market Parameters")
         if st.session_state.get("data_mode") == "Preloaded Dataset":
             ticker = st.selectbox("Ticker", ["AAPL", "NVDA", "SPY"], key="smile_ticker").upper()
-            
-            # --- DATE PICKER REFINEMENT (BACK TO CALENDAR BOX) ---
+
             from src.market_data import get_available_dates
-            # Note: op_type is defined below, but we can peek at session state or use default
+            
             temp_op_type = st.session_state.get("smile_op_type", "C")
             available_dates = get_available_dates(ticker, temp_op_type)
             
@@ -627,24 +618,23 @@ with tabs[4]:
                 st.error(f"No concurrent data for {ticker} {temp_op_type} in preloaded CSVs.")
 
             c_exp1, c_exp2 = st.columns(2)
-            # Locked Expiration - Display as 2026/02/20
+            #lcok expiration at 2026/02/20
             c_exp1.text_input("Expiration", value="2026/02/20", disabled=True, key="smile_exp_disp")
             exp_date = datetime(2026, 2, 20).date() 
             op_type = c_exp2.selectbox("Type", ["C", "P"], key="smile_op_type")
             
-            # Locked Central Strike based on Ticker
+            #locked central strike based on ticker
             strike_map = {"NVDA": 170.0, "AAPL": 270.0, "SPY": 670.0}
             default_strike = strike_map.get(ticker, 100.0)
             st.number_input("Central Strike", value=default_strike, disabled=True, step=1.0, key=f"smile_strike_disp_{ticker}")
-            strike = default_strike # Internal variable for logic
-            
-            # --- ACTION BUTTON (PRELOADED) ---
+            strike = default_strike
+
             st.divider()
             if st.button("Update Data & Generate Smile", key="smile_full_update_preloaded"):
                 if analysis_date:
                     ref_date_str = analysis_date.strftime("%Y-%m-%d")
                     with st.spinner(f"Updating data for {ref_date_str}..."):
-                        # Reuse get_stock_history_vol and get_option_aggregates (which use cache)
+                        
                         S_real, hv_real, err_s = get_stock_history_vol(ticker, ref_date_str)
                         df_opt_bar, err_o = get_option_aggregates(ticker, exp_date, op_type, strike, ref_date_str, ref_date_str)
                         
@@ -653,8 +643,7 @@ with tabs[4]:
                             st.session_state["underlying_S"] = S_real
                             st.session_state["underlying_HV"] = hv_real
                             st.session_state["market_mode"] = "Previous Day"
-                            
-                            # Store in center_data for display
+                                                      
                             time_to_exp = (pd.to_datetime(exp_date).date() - analysis_date).days / 365.0
                             st.session_state["center_data"] = {
                                 "Strike": strike, "Date": row_i["Date"], "Open": row_i["Open"], "High": row_i["High"],
@@ -662,7 +651,6 @@ with tabs[4]:
                                 "IV": row_i.get("Implied Volatility"), "IV_Error": None, "TimeToExp": time_to_exp
                             }
 
-                            # --- GENERATE SMILE IMMEDIATELY ---
                             from src.market_data import load_preloaded_options
                             df_all = load_preloaded_options()
                             mask = (df_all['ticker'] == ticker) & \
@@ -707,13 +695,12 @@ with tabs[4]:
         if st.session_state.get("data_mode") == "Live API":
             st.subheader("Data Fetching")
             if st.button("Fetch Data", key="smile_fetch", disabled=("user_api_key" not in st.session_state)):
-                # Clear conflicting surface data if any
+                
                 if "surface_data" in st.session_state: del st.session_state["surface_data"]
                 if "custom_data_table" in st.session_state: del st.session_state["custom_data_table"]
                 if "smile_data" in st.session_state: del st.session_state["smile_data"]
                 
                 with st.spinner("Fetching data from Massive..."):
-                    # --- STEP 1: Central Strike Only ---
                     center_df, err_msg, contract_symbol = get_option_previous_close(ticker, exp_date, op_type, strike)
     
                     if not center_df.empty:
@@ -721,7 +708,6 @@ with tabs[4]:
                         ref_date_str = ref_date_obj.strftime("%Y-%m-%d")
                         row = center_df.iloc[0]
                         
-                        # Store Option Data
                         st.session_state["center_data"] = {
                             "Strike": strike,
                             "Date": row["Date"],
@@ -735,15 +721,14 @@ with tabs[4]:
                             "TimeToExp": 0.0
                         }
                         st.session_state["market_mode"] = "Previous Day"
-                        
-                        # Try loading Underlying
+
                         S_real, hv_real, err_s = get_stock_history_vol(ticker, ref_date_str)
                         
                         if S_real:
                             st.session_state["underlying_S"] = S_real
                             st.session_state["underlying_HV"] = hv_real
                             
-                            # Calc Center IV or use precomputed
+                            #calc center IV or use precomputed
                             if "Implied Volatility" in row:
                                 iv_c = row["Implied Volatility"]
                                 iv_err_c = None
@@ -764,11 +749,9 @@ with tabs[4]:
                     else:
                         st.error(f"Center Strike Option Data Error: {err_msg}")
     with col_input:
-        # Step 2: Generate Smile (Live Mode only)
         if st.session_state.get("data_mode") == "Live API" and st.session_state.get("market_mode") == "Previous Day" and "center_data" in st.session_state:
             st.divider()
             if st.button("Generate Volatility Smile", key="smile_gen"):
-                # Live API Logic
                 with st.spinner("Fetching neighbor strikes via API..."):
                     center = st.session_state["center_data"]
                     S_real = st.session_state["underlying_S"]
@@ -776,20 +759,18 @@ with tabs[4]:
                     exp_date = st.session_state.get("smile_exp")
                     op_type = st.session_state.get("smile_op_type", "C")
                     
-                    # Relative strikes: +/- 15% and +/- 5% of spot, rounded up to multiple of 5
+                    #relative strikes: +/- 15% of spot for DEEP OTM / ITM and +/- 5% of spot for SLIGHT OTM / ITM, rounded up to multiple of 5 for data availability purposes
                     rel_offsets = [0.85, 0.95, 1.05, 1.15]
                     strikes_to_fetch = sorted(list(set([int(np.ceil((S_real * r) / 5.0) * 5) for r in rel_offsets])))
-                    
-                    # Remove center strike if it's already in the neighbors to avoid double fetching
+
                     if center["Strike"] in strikes_to_fetch:
                         strikes_to_fetch.remove(center["Strike"])
                     
                     smile_rows = []
-                    # Helper for moneyness (Log Moneyness)
+                    
                     def calc_moneyness(S, K):
                         return np.log(K / S)
 
-                    # Add Center
                     smile_rows.append({
                         "Strike": center["Strike"], 
                         "IV": center["IV"], 
@@ -816,7 +797,7 @@ with tabs[4]:
         if st.session_state.get("market_mode") == "Previous Day" and "center_data" in st.session_state:
             center = st.session_state["center_data"]
             
-            # --- LINE 1: Option OHLCV ---
+            #OHLCV data
             st.markdown("### 1. Option OHLCV Data")
             texp = center.get("TimeToExp", 0.0)
             date_str = center['Date'].strftime('%Y-%m-%d')
@@ -829,20 +810,17 @@ with tabs[4]:
             ohlc_cols[3].metric("Close", f"${center['Close']:.2f}")
             ohlc_cols[4].metric("Volume", f"{center['Volume']:,}")
             
-            # --- LINE 2: Underlying ---
+            #Underlying data
             st.markdown("### 2. Underlying Asset")
             if "underlying_S" in st.session_state:
                 udata = st.columns(2)
                 udata[0].metric("Underlying Price", f"${st.session_state.get('underlying_S', 0):.2f}")
-                
-                # --- CONSTANT HV LOGIC (PRELOADED) ---
+
                 curr_hv = st.session_state.get('underlying_HV', 0)
                 if st.session_state.get("data_mode") == "Preloaded Dataset":
-                    # Fix HV value for preloaded mode relative to the ticker's latest data
+
                     t_curr = st.session_state.get("smile_ticker", "AAPL")
-                    # If we haven't cached the 'constant' HV for this ticker yet
                     if f"constant_hv_{t_curr}" not in st.session_state:
-                        # Get HV for the latest available date to use as 'constant'
                         from src.market_data import get_stock_history_vol
                         _, hv_const, _ = get_stock_history_vol(t_curr, "2025-12-17") # Dataset max date
                         st.session_state[f"constant_hv_{t_curr}"] = hv_const
@@ -857,18 +835,17 @@ with tabs[4]:
             else:
                  st.warning("Underlying Data Not Available")
             
-            # --- LINE 3: Implied Volatility ---
+            #IV part
             st.markdown("### 3. Implied Volatility")
             if center.get('IV_Error'):
                 st.error(f"IV Calculation Failed: {center['IV_Error']}")
             else:
                 st.metric("Implied Volatility", f"{center['IV']:.2%}" if center['IV'] else "N/A")
-            
-            # Below this: Smile Section
+
             if "smile_data" in st.session_state:
                 df_smile = st.session_state["smile_data"]
                 
-                # Filter out invalid IVs
+                #filter invalid IVs
                 df_smile = df_smile.replace([np.inf, -np.inf], np.nan).dropna(subset=["IV"])
                 
                 if not df_smile.empty:
@@ -881,25 +858,21 @@ with tabs[4]:
                     
                     x_vals = df_smile[x_col].values
                     y_vals = df_smile["IV"].values
-                    
-                    # Calculate Target X (Underlying)
+
                     S_spot = st.session_state.get('underlying_S', center["Strike"])
-                    # If using Log Moneyness, ATM is ln(K/S) where K=S => ln(1) = 0
                     target_x = S_spot if not use_moneyness else 0.0
-                    
-                    # Check Bounds
+
                     min_k = df_smile["Strike"].min()
                     max_k = df_smile["Strike"].max()
                     if S_spot < min_k or S_spot > max_k:
                          st.warning("Spot price not within smile bounds, data may be wrong")
-                    
-                    # Interpolate IV at Spot
+
                     iv_at_spot = interpolate_volatility(x_vals, y_vals, target_x)
                     
                     if iv_at_spot:
                         st.caption(f"**Interpolated IV at Spot:** {iv_at_spot:.2%}")
 
-                    # Smoothing
+                    #curve smoothing
                     if len(x_vals) >= 4:
                          from scipy.interpolate import make_interp_spline
                          try:
@@ -915,7 +888,7 @@ with tabs[4]:
                     fig.add_trace(go.Scatter(x=X_smooth, y=Y_smooth, mode='lines', name='Smile', line=dict(shape='spline', color='#00CC96')))
                     fig.add_trace(go.Scatter(x=x_vals, y=y_vals, mode='markers', name='Data', marker=dict(size=8, color='#EF553B')))
                     
-                    # Add Vertical Line for Underlying
+                    #spot vertical line for visual purposes
                     fig.add_vline(
                         x=target_x, 
                         line_width=2, 
@@ -934,20 +907,17 @@ with tabs[4]:
              if st.session_state.get("data_mode") == "Live API":
                 st.info("Select parameters and click Fetch Data.")
 
-# --- TAB 6: Volatility Surface ---
+#TAB 6: volatility surface
 with tabs[5]:
-    # st.header("Volatility Surface (Custom Timeframe)")
     
     col_s_input, col_s_view = st.columns([1, 2])
     
     with col_s_input:
-        # --- "Enable API Mode" Button (Surface Tab) ---
         
         st.subheader("Market Parameters")
         if st.session_state.get("data_mode") == "Preloaded Dataset":
             ticker = st.selectbox("Ticker", ["AAPL", "NVDA", "SPY"], key="surf_ticker").upper()
-            
-            # Date Selection (Moved below ticker)
+
             c_d1, c_d2 = st.columns(2)
             end_date_default = datetime(2025, 12, 17).date()
             start_date_default = end_date_default - timedelta(days=15)
@@ -956,12 +926,12 @@ with tabs[5]:
             surf_start_date = c_d1.date_input("Start Date", value=start_date_default, min_value=datetime(2024, 12, 18).date(), max_value=surf_end_date - timedelta(days=1), key="surf_analysis_start")
 
             c_exp1, c_exp2 = st.columns(2)
-            # Locked Expiration - Display as 2026/02/20
+            #exp date locked at 2026/02/20 to match preloaded dataset
             c_exp1.text_input("Expiration", value="2026/02/20", disabled=True, key="surf_exp_disp")
             exp_date = datetime(2026, 2, 20).date()
             op_type = c_exp2.selectbox("Type", ["C", "P"], key="surf_op_type")
             
-            # Locked Central Strike based on Ticker
+            #strike locked based on ticker
             strike_map = {"NVDA": 170.0, "AAPL": 270.0, "SPY": 670.0}
             default_strike = strike_map.get(ticker, 100.0)
             st.number_input("Central Strike", value=default_strike, disabled=True, step=1.0, key=f"surf_strike_disp_{ticker}")
@@ -979,7 +949,6 @@ with tabs[5]:
             st.divider()
             st.subheader("Data Fetching")
             
-            # Date Selection
             c_d1, c_d2 = st.columns(2)
             today = datetime.now().date()
             max_end_date = today - timedelta(days=1)
@@ -992,14 +961,13 @@ with tabs[5]:
             
             is_key_missing = "user_api_key" not in st.session_state
             if st.button("Fetch Data", key="surf_fetch", disabled=(start_date >= end_date or is_key_missing)):
-                # Clear conflicting smile data AND previous surface plots
+
                 if "center_data" in st.session_state: del st.session_state["center_data"]
                 if "smile_data" in st.session_state: del st.session_state["smile_data"]
                 if "surface_data" in st.session_state: del st.session_state["surface_data"]
                 
                 with st.spinner("Fetching data from Massive (Multi-Strike)..."):
-                    
-                    # 1. Fetch Underlying ONCE for the range
+
                     u_data, u_err = get_underlying_history_range(
                         ticker, 
                         start_date.strftime("%Y-%m-%d"), 
@@ -1007,12 +975,10 @@ with tabs[5]:
                     )
                     
                     if u_data:
-                        # Determine Spot (Latest Close in range) for relative offsets
                         latest_date = max(u_data.keys())
                         S_spot = u_data[latest_date]
                         
-                        # Relative strikes: central strike + neighbors at +/- 15% & +/- 5% of spot
-                        # Rounded up to nearest multiple of 5
+                        #fetch neighbors with the same logic as smile
                         rel_offsets = [0.85, 0.95, 1.05, 1.15]
                         neighbors = [int(np.ceil((S_spot * r) / 5.0) * 5) for r in rel_offsets]
                         strikes_to_fetch = sorted(list(set([strike] + neighbors)))
@@ -1068,17 +1034,15 @@ with tabs[5]:
                     else:
                         st.error(f"Underlying fetch error: {u_err}")
         else:
-            # Preloaded Mode: Action Button
+            
             st.divider()
             if st.button("Update Data & Generate Surface", key="surf_gen_preloaded"):
-                # Clear conflicting smile data AND previous surface plots/tables
                 if "center_data" in st.session_state: del st.session_state["center_data"]
                 if "smile_data" in st.session_state: del st.session_state["smile_data"]
                 if "surface_data" in st.session_state: del st.session_state["surface_data"]
                 if "custom_data_table" in st.session_state: del st.session_state["custom_data_table"]
 
                 with st.spinner("Processing offline dataset..."):
-                    # 1. Fetch Underlying Range
                     u_data, u_err = get_underlying_history_range(
                         ticker, 
                         surf_start_date.strftime("%Y-%m-%d"), 
@@ -1086,7 +1050,6 @@ with tabs[5]:
                     )
                     
                     if u_data:
-                        # 2. Fetch ALL available strikes for this ticker/expiry/type
                         df_all_opt, err_msg = get_all_preloaded_options(
                             ticker, exp_date, op_type, 
                             surf_start_date.strftime("%Y-%m-%d"), 
@@ -1125,7 +1088,7 @@ with tabs[5]:
                         st.error(f"Underlying range error: {u_err}")
 
     with col_s_input:
-        # Step 2: Generate Surface (Live Mode only, Preloaded does it in one step)
+        #generate the surface
         if st.session_state.get("data_mode") == "Live API" and st.session_state.get("market_mode") == "Custom Timeframe" and "custom_data_table" in st.session_state:
              st.divider()
              if st.button("Generate Volatility Surface", key="surf_gen"):
@@ -1133,11 +1096,10 @@ with tabs[5]:
                  
     with col_s_view:
         if st.session_state.get("market_mode") == "Custom Timeframe":
-            # State 1: Table (Just Central Strike for clarity, or summary?)
+            
             if "custom_data_table" in st.session_state:
                 df_all = st.session_state["custom_data_table"]
                 
-                # Filter for Central Strike for the table View
                 center_val = strike
                 df_table = df_all[df_all["Strike"] == center_val].sort_values("Date")
                 
@@ -1161,7 +1123,6 @@ with tabs[5]:
                     hide_index=True
                 )
             
-            # State 2: Surface Plot (if generated)
             if "surface_data" in st.session_state:
                 df_surf = st.session_state["surface_data"]
                 
@@ -1169,14 +1130,12 @@ with tabs[5]:
                 st.subheader("Implied Volatility Surface")
                 st.info(f"Surface generated using {len(df_surf)} data points.")
                 
-                # --- Advanced Surface: 2D Interpolation (TTE vs Moneyness vs IV) ---
                 try:
-                    # 1. Prepare Data
                     df_clean = df_surf.copy()
                     df_clean['Date'] = pd.to_datetime(df_clean['Date'])
                     df_clean['TimeToExp'] = (pd.to_datetime(exp_date) - df_clean['Date']).dt.days / 365.0
                     
-                    # Sanity Check: Positive IV and Future Dates
+                    #sanity check
                     df_clean = df_clean[(df_clean['IV'] > 0) & (df_clean['TimeToExp'] > 0)].copy()
                     
                     # Filter for validity and drop NaNs
@@ -1187,14 +1146,12 @@ with tabs[5]:
                     else:
                         from scipy.interpolate import griddata
                         
-                        # Define regular grid coordinates
                         min_mon, max_mon = df_clean["Moneyness"].min(), df_clean["Moneyness"].max()
                         min_tte, max_tte = df_clean["TimeToExp"].min(), df_clean["TimeToExp"].max()
                         
-                        # Check for meaningful spread
                         if max_mon == min_mon or max_tte == min_tte:
                             st.info("Forming a 3D surface requires a spread across both Strikes and Time. Plotting as 2D fallback.")
-                            # Fallback Scatter Plot
+
                             fig = go.Figure(data=[go.Scatter(
                                 x=df_clean["Moneyness"], y=df_clean["IV"], mode='markers', 
                                 marker=dict(size=8, color=df_clean["TimeToExp"], colorscale='Viridis', showscale=True)
@@ -1202,8 +1159,6 @@ with tabs[5]:
                             fig.update_layout(title="IV vs Moneyness (Single Slice Fallback)", xaxis_title="Log Moneyness", yaxis_title="IV", template="plotly_dark")
                             st.plotly_chart(fig, width="stretch")
                         else:
-                            # 2. Interpolate Scattered Points to Regular Grid
-                            # grid_x_1d = cols (Moneyness), grid_y_1d = rows (TTE)
                             grid_x_1d = np.linspace(min_mon, max_mon, 30)
                             grid_y_1d = np.linspace(min_tte, max_tte, 30)
                             grid_x, grid_y = np.meshgrid(grid_x_1d, grid_y_1d)
@@ -1211,10 +1166,8 @@ with tabs[5]:
                             points = df_clean[["Moneyness", "TimeToExp"]].values
                             values = df_clean["IV"].values
                             
-                            # Use griddata - try 'linear' first, then 'nearest' for coverage
                             grid_z = griddata(points, values, (grid_x, grid_y), method='linear')
                             
-                            # Fallback for gaps: fill with nearest
                             grid_z_nearest = griddata(points, values, (grid_x, grid_y), method='nearest')
                             if np.isnan(grid_z).any():
                                 if np.isnan(grid_z).all():
@@ -1226,7 +1179,7 @@ with tabs[5]:
                             if np.isnan(grid_z).all():
                                  st.error("Surface interpolation failed (All NaNs). Likely collinear data.")
                             else:
-                                # 3. Plot
+                                #plot the surface
                                 fig = go.Figure(data=[go.Surface(
                                     z=grid_z,
                                     x=grid_x_1d,

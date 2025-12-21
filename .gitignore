@@ -12,9 +12,7 @@ ENV/
 env/
 
 # Project-specific exclusions
-scripts/
-fecther.py
-verify_strikes.py
+others/
 
 # IDE
 .vscode/
