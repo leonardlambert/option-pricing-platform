@@ -1,88 +1,45 @@
-# Options Pricing & Volatility Analysis App
+# Options Pricing & Scenario Analysis Platform
 
-This application is a desk-oriented options analytics tool focused on **pricing, valuation, and middle-office use cases**.  
+This browser application is a desk-oriented options analytics tool focused on **pricing, valuation, and middle-office use cases**.  
 It emphasizes robustness, numerical stability, and realistic market constraints rather than academic sophistication.
-
-The project is designed to be **usable immediately** (no setup friction) while still exposing deeper quantitative and engineering work for those who want to inspect it.
 
 ---
 
 ## Scope & Features
 
-### Core Functionality (default)
+### Core Functionality
 - **Option pricing & Greeks**
-  - Black–Scholes pricing
-  - Robust implied volatility solver (Newton + bisection fallback)
-  - Explicit handling of edge cases (low vega, bounds, expiry)
+  - Pricing using Black–Scholes-Merton, Variance Gamma, and Merton models
+  - Greeks calculation using closed-form expressions and finite differences
 
-- **Strategy builder / spread visualization**
-  - Payoff at maturity
-  - Current value via model pricing
-  - Greeks at strategy level
+- **Strategy builder and Spread visualization**
+  - Payoff at maturity & current value graph  
+  - Multi-option strategy building and saving in an option book JSON file
 
-- **Monte Carlo PnL visualization**
-  - Forward price simulation
-  - PnL distributions
-  - Scenario-based inspection
+- **PnL Distribution**
+  - Monte Carlo Simulation using saved strategies, with adaptables path number / steps / horizon
+  - Risk Metrics : Value at Risk (VaR), Conditional Value at Risk (CVaR)
+
+- **Strategy Stress Testing**
+  - Assessment of Spot / Volatility / Time Decay impact on PnL using Taylor approximation
+  - Quick Scenario Analysis, PNL residual check
 
 - **Volatility smile**
-  - Sparse market strikes (API-constrained)
-  - Interpolation in log-moneyness
-  - ATM IV extraction at spot
-  - Toggle between strike and moneyness representation
+  - Construction using a preloaded dataset or live API data
+  - Use of 5 strikes : one central, two OTM, two ITM
 
-- **Volatility surface** *(in progress)*
-  - Normalized representation (log-moneyness × maturity)
-  - Designed for stability and interpretability rather than over-smoothing
-
-- **Risk / stress testing** *(in progress)*
-
----
-
-## Design Principles
-
-- **Market realism over theory**
-  - Handles missing strikes, low liquidity, solver failures
-  - Makes no assumption that data is clean or complete
-
-- **Separation of concerns**
-  - Market data ingestion
-  - Pricing and numerical routines
-  - Visualization and UI
-
-- **Safe defaults**
-  - No exotic models enabled by default
-  - No API key required to explore the app
+- **Volatility surface**
+  - Plotting using a preloaded dataset or live API data
+  - Normalized representation (log-moneyness × time to maturity)
 
 ---
 
 ## Demo Mode vs Live Data
 
-The app runs in **Demo Mode by default**, using cached market data snapshots.
-
-This avoids:
-- API key requirements
-- Setup friction
-- External dependencies
+The app runs in **Demo Mode by default**, using cached market data snapshots of AAPL, NVDA and SPY.
 
 Live market data can be enabled optionally by providing an API key in the UI.  
 All core functionality works identically in demo mode.
-
----
-
-## Advanced / Add-On Features
-
-Some features are intentionally isolated as **optional add-ons**:
-- Exotic pricing processes
-- Alternative interpolation schemes
-- Experimental numerical methods
-
-These are provided as proof of:
-- Quantitative depth
-- Numerical robustness
-- Software engineering practices
-
-They are **off by default** and do not affect core outputs unless explicitly enabled.
 
 ---
 
@@ -90,8 +47,7 @@ They are **off by default** and do not affect core outputs unless explicitly ena
 
 - **Moneyness** is defined as:
   - `log(K / S)` (or `log(K / F)` when available)
-- Smiles and surfaces are normalized to avoid spot-induced distortions
-- OTM options are preferred when building smiles
+- Smiles are intepolated using a **cubic spline** / Surfaces are intepolated using a **griddata**
 
 ---
 
