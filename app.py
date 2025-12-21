@@ -12,6 +12,7 @@ from pricing.characteristic_functions import phi_bsm, phi_vg, phi_merton
 from src.visualizer import plot_spread_analysis, plot_simulation_results, plot_efficient_frontier
 from src.simulation import simulate_gbm_paths, simulate_vg_paths, simulate_mjd_paths
 from src.market_data import get_option_aggregates, get_option_previous_close, get_stock_history_vol, get_underlying_history_range, validate_api_key, get_available_dates, get_all_preloaded_options
+from pricing.finite_differences import compute_greeks_fd
 
 # Page Config
 st.set_page_config(page_title="Option Pricing & Risk Management", layout="wide", page_icon="📈", initial_sidebar_state="collapsed")
@@ -146,7 +147,15 @@ with tabs[0]:
         sigma = st.number_input("Volatility (σ)", value=0.2)
         option_type = st.selectbox("Type", ["C", "P"])
     with col4:
-        model = st.selectbox("Pricing Model", ["Black-Scholes", "FFT (Variance Gamma)", "FFT (Merton)"])
+        model = st.selectbox("Pricing Model", ["Black-Scholes-Merton", "Variance Gamma", "Merton"])
+        
+        # Model information help box
+        model_info = {
+            "Black-Scholes-Merton": "**Stochastic Family:** GBM | **Pricing Logic:** Closed Form",
+            "Variance Gamma": "**Stochastic Family:** Lévy Process | **Pricing Logic:** Fast Fourier Transform",
+            "Merton": "**Stochastic Family:** Jump Diffusion | **Pricing Logic:** Fast Fourier Transform"
+        }
+        st.caption(f"{model_info[model]}")
 
     if st.button("Calculate Price"):
         st.divider()
@@ -154,27 +163,44 @@ with tabs[0]:
         
         # 1. Pricing
         price = 0.0
-        if model == "Black-Scholes":
+        model_params = {}
+        use_fd_greeks = False
+        
+        if model == "Black-Scholes-Merton":
             price = black_scholes_price(S, K, T, r, sigma, option_type)
-        elif model == "FFT (Variance Gamma)":
+        elif model == "Variance Gamma":
             # Hardcoded VG params for demo, or add inputs
             theta, nu = -0.1, 0.2 
             price = fft_pricer(K, S, T, r, phi_vg, args=(sigma, theta, nu), call=(option_type=="C"))
-            st.caption(f"Used VG Params: θ={theta}, ν={nu}")
-        elif model == "FFT (Merton)":
+            st.caption(f"Used VG Parameters: θ = {theta}, ν = {nu}")
+            model_params = {'theta': theta, 'nu': nu}
+            use_fd_greeks = True
+        elif model == "Merton":
             # Hardcoded Merton params
             lamb, mu_j, sigma_j = 0.1, -0.05, 0.2
             price = fft_pricer(K, S, T, r, phi_merton, args=(sigma, lamb, mu_j, sigma_j), call=(option_type=="C"))
-            st.caption(f"Used Merton Params: λ={lamb}, μ_j={mu_j}, σ_j={sigma_j}")
+            st.caption(f"Used Merton Parameters: λ = {lamb}, μ_j = {mu_j}, σ_j = {sigma_j}")
+            model_params = {'lamb': lamb, 'mu_j': mu_j, 'sigma_j': sigma_j}
+            use_fd_greeks = True
             
-        # 2. Greeks (BSM Approximation for all for simplicity, or implement Model-Specific)
-        # Using BSM greeks as proxy or exact if BSM
-        delta, gamma, theta_g, vega, rho = compute_greeks(S, K, T, r, sigma, option_type)
+        # 2. Greeks computation
+        if use_fd_greeks:
+            # Use finite differences for non-BSM models
+            model_name = "VG" if "Variance Gamma" in model else "Merton"
+            greeks = compute_greeks_fd(S, K, T, r, sigma, option_type, model_name, model_params)
+            delta, gamma, theta_g, vega, rho = greeks['delta'], greeks['gamma'], greeks['theta'], greeks['vega'], greeks['rho']
+        else:
+            # Use analytical Greeks for BSM
+            delta, gamma, theta_g, vega, rho = compute_greeks(S, K, T, r, sigma, option_type)
         
         with c1:
             st.metric("Option Price", f"${price:.4f}")
             
         with c2:
+            # Add disclaimer for FD Greeks
+            if use_fd_greeks:
+                st.caption("Greeks computed using finite differences", help="Finite difference approximation is used for models without analytical Greek formulas / Exotic Price Processes. Results are numerical approximations.")
+            
             g_col1, g_col2 = st.columns(2)
             g_col1.write(f"**Delta**: {delta:.4f}")
             g_col1.write(f"**Gamma**: {gamma:.4f}")
@@ -190,23 +216,13 @@ with tabs[1]:
     with col_setup:
         st.subheader("Market Parameters")
         
-        # Model Selection
-        pricing_model = st.selectbox("Pricing Model", ["Black-Scholes", "Variance Gamma", "Merton Jump Diffusion"], key="spread_model")
+        # Fixed to Black-Scholes only
+        pricing_model = "Black-Scholes"
         
         S0_spread = st.number_input("Spot Price (S)", value=100.0, key="s_spread")
         T_spread = st.number_input("Time to Maturity (T)", value=1.0, key="t_spread")
         r_spread = st.number_input("Risk-Free Rate (r)", value=0.05, key="r_spread")
         sigma_spread = st.number_input("Volatility (σ)", value=0.2, key="v_spread")
-        
-        # Model Specific Params
-        model_params = {}
-        if pricing_model == "Variance Gamma":
-            model_params["theta"] = st.number_input("Theta (Drift)", value=-0.1, key="vg_theta")
-            model_params["nu"] = st.number_input("Nu (Var)", value=0.2, key="vg_nu")
-        elif pricing_model == "Merton Jump Diffusion":
-            model_params["lamb"] = st.number_input("Lambda (Jump Freq)", value=0.1, key="mjd_lamb")
-            model_params["mu_j"] = st.number_input("Mean Jump", value=-0.05, key="mjd_muj")
-            model_params["sigma_j"] = st.number_input("Jump Vol", value=0.2, key="mjd_sigmaj")
         
         st.subheader("Strategy Legs")
         num_legs = st.number_input("Legs Count", 1, 6, 2)
@@ -221,20 +237,10 @@ with tabs[1]:
         st.divider()
         strat_name = st.text_input("Strategy Name", value="My Strategy", placeholder="e.g. Iron Condor")
         if st.button("💾 Save Strategy to Book"):
-            # Calculate and attach premiums to legs
+            # Calculate and attach premiums to legs (using Black-Scholes)
             save_legs = []
             for leg in legs:
-                if pricing_model == "Black-Scholes":
-                    p = black_scholes_price(S0_spread, leg["strike"], T_spread, r_spread, sigma_spread, leg["type"])
-                elif pricing_model == "Variance Gamma":
-                    p = fft_pricer(leg["strike"], S0_spread, T_spread, r_spread, phi_vg, 
-                                    args=(sigma_spread, model_params["theta"], model_params["nu"]), 
-                                    call=(leg["type"]=="C"))
-                else:
-                    p = fft_pricer(leg["strike"], S0_spread, T_spread, r_spread, phi_merton, 
-                                    args=(sigma_spread, model_params["lamb"], model_params["mu_j"], model_params["sigma_j"]), 
-                                    call=(leg["type"]=="C"))
-                
+                p = black_scholes_price(S0_spread, leg["strike"], T_spread, r_spread, sigma_spread, leg["type"])
                 leg_with_premium = leg.copy()
                 leg_with_premium["premium"] = round(p, 4)
                 save_legs.append(leg_with_premium)
@@ -261,17 +267,7 @@ with tabs[1]:
         
         for leg in legs:
             # 1. Net Premium (Price at S0)
-            if pricing_model == "Black-Scholes":
-                leg_price = black_scholes_price(S0_spread, leg["strike"], T_spread, r_spread, sigma_spread, leg["type"])
-            elif pricing_model == "Variance Gamma":
-                leg_price = fft_pricer(leg["strike"], S0_spread, T_spread, r_spread, phi_vg, 
-                                     args=(sigma_spread, model_params["theta"], model_params["nu"]), 
-                                     call=(leg["type"]=="C"))
-            elif pricing_model == "Merton Jump Diffusion":
-                leg_price = fft_pricer(leg["strike"], S0_spread, T_spread, r_spread, phi_merton, 
-                                     args=(sigma_spread, model_params["lamb"], model_params["mu_j"], model_params["sigma_j"]), 
-                                     call=(leg["type"]=="C"))
-            
+            leg_price = black_scholes_price(S0_spread, leg["strike"], T_spread, r_spread, sigma_spread, leg["type"])
             net_premium += leg["position"] * leg_price
             
             # 2. Range Calculation
@@ -281,23 +277,14 @@ with tabs[1]:
                 if step_ctr % 10 == 0:
                     my_bar.progress(min(step_ctr / total_steps, 1.0), text=progress_text)
 
-                # Pricing at s_i
-                if pricing_model == "Black-Scholes":
-                    p_i = black_scholes_price(s_i, leg["strike"], T_spread, r_spread, sigma_spread, leg["type"])
-                    d, g, th, v, rh = compute_greeks(s_i, leg["strike"], T_spread, r_spread, sigma_spread, leg["type"])
-                    greeks_agg["Delta"][idx] += leg["position"] * d
-                    greeks_agg["Gamma"][idx] += leg["position"] * g
-                    greeks_agg["Theta"][idx] += leg["position"] * th
-                    greeks_agg["Vega"][idx] += leg["position"] * v
-                    greeks_agg["Rho"][idx] += leg["position"] * rh
-                elif pricing_model == "Variance Gamma":
-                    p_i = fft_pricer(leg["strike"], s_i, T_spread, r_spread, phi_vg, 
-                                   args=(sigma_spread, model_params["theta"], model_params["nu"]), 
-                                   call=(leg["type"]=="C"), N=2048) # Reduced N for speed
-                elif pricing_model == "Merton Jump Diffusion":
-                     p_i = fft_pricer(leg["strike"], s_i, T_spread, r_spread, phi_merton, 
-                                    args=(sigma_spread, model_params["lamb"], model_params["mu_j"], model_params["sigma_j"]), 
-                                    call=(leg["type"]=="C"), N=2048)
+                # Pricing at s_i (Black-Scholes)
+                p_i = black_scholes_price(s_i, leg["strike"], T_spread, r_spread, sigma_spread, leg["type"])
+                d, g, th, v, rh = compute_greeks(s_i, leg["strike"], T_spread, r_spread, sigma_spread, leg["type"])
+                greeks_agg["Delta"][idx] += leg["position"] * d
+                greeks_agg["Gamma"][idx] += leg["position"] * g
+                greeks_agg["Theta"][idx] += leg["position"] * th
+                greeks_agg["Vega"][idx] += leg["position"] * v
+                greeks_agg["Rho"][idx] += leg["position"] * rh
                 
                 spread_vals[idx] += leg["position"] * p_i
                 
@@ -312,13 +299,10 @@ with tabs[1]:
         
         st.plotly_chart(fig1, key="spread_plot_1", width='stretch')
         
-        if pricing_model == "Black-Scholes":
-            with st.expander("View Greeks"):
-                st.plotly_chart(fig2, key="spread_plot_2", width='stretch')
-        else:
-            st.caption("Greeks visualization available only for Black-Scholes model.")
+        with st.expander("View Greeks"):
+            st.plotly_chart(fig2, key="spread_plot_2", width='stretch')
             
-        st.info(f"Net Premium ({pricing_model}): ${net_premium:.2f}")
+        st.info(f"Net Premium (Black-Scholes): ${net_premium:.2f}")
 
 # --- TAB 3: PnL Visualization ---
 with tabs[2]:

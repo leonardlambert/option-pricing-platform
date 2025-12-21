@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual Environment
+MRPP_venv/
+venv/
+ENV/
+env/
+
+# Project-specific exclusions
+scripts/
+fecther.py
+verify_strikes.py
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data files (optional - uncomment if needed)
+# *.csv
+# *.json
+# data/
