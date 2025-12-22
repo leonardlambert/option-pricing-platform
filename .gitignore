@@ -1,5 +1,4 @@
 # Python
-__pycache__/
 *.py[cod]
 *$py.class
 *.so
@@ -14,6 +13,8 @@ env/
 # Project-specific exclusions
 others/
 resources/
+src/__pycache__/
+pricing/__pycache__/
 
 # IDE
 .vscode/
