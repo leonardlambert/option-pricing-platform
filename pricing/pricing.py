@@ -1,7 +1,6 @@
 import numpy as np
 from scipy.stats import norm
 from scipy.stats import norm
-# from scipy.optimize import brentq # No longer using BrentQ directly
 
 # --- Black Scholes Merton ---
 
@@ -17,10 +16,8 @@ def black_scholes_price(S, K, T, r, sigma, option_type):
     
     if option_type == "C":
         return S * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2)
-        #return np.exp(-r*T)* (S * norm.cdf(d1) - K * norm.cdf(d2)) #Priced on forward price
     elif option_type == "P":
         return K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1)
-        #return np.exp(-r*T)* (K * norm.cdf(-d2) - S * norm.cdf(-d1)) #Priced on forward price
     return 0.0
 
 def compute_greeks(S, K, T, r, sigma, option_type):
@@ -52,7 +49,6 @@ def compute_greeks(S, K, T, r, sigma, option_type):
 def calculate_pnl_attribution(S, K, T, r, sigma, option_type, dS, dVol, dT):
     """
     Calculate Taylor PnL Attribution component-wise for a single option.
-    Formula: Delta*dS + 0.5*Gamma*dS^2 + Vega*dVol + Theta*dT
     """
     delta, gamma, theta, vega, _ = compute_greeks(S, K, T, r, sigma, option_type)
     
@@ -74,9 +70,7 @@ import math
 MIN_T = 1.0 / 1000.0
 MIN_X = 0.01
 MIN_FS = 0.01
-MIN_V = 0.005 # Can go lower if needed, but 0.5% is reasonable floor
-# MIN_V = 1e-4 # User suggested increasing sigma_low, but actually sometimes it needs to be lower.
-# Let's stick effectively to user request of being robust.
+MIN_V = 0.005 
 MAX_V = 5.0
 MAX_STEPS = 100
 PRECISION = 1.0e-5
@@ -169,11 +163,6 @@ def implied_vol_bisection(price, S, K, T, r, option_type, b=None):
 
 def implied_volatility(price, S, K, T, r, option_type, tol=1e-5, max_iter=100):
                        
-    
-    
-    # 0. Heuristic: Auto-scale Price (Cents -> Dollars)
-    # Check if price is unreasonably high (above asset/strike + buffer)
-    # This is a common issue with API data (x100 factor)
     cutoff = S * 2 if option_type == "C" else K * 2
     #print("option_type", option_type)
     b = r # Std Black Scholes
