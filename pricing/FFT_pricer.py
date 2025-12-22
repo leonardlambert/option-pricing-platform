@@ -4,7 +4,6 @@ from scipy.fft import fft
 def log_strike_partition(eta=0.25, N=4096):
     """
     Creates a partition of strike prices in the log-space.
-    Matches logic from optionfft.py.
     """
     b = np.pi / eta
     lamb = 2 * np.pi / (eta * N)
@@ -14,8 +13,6 @@ def log_strike_partition(eta=0.25, N=4096):
 def fft_pricer(K, S0, T, r, char_func, args=(), alpha=1.5, N=4096, eta=0.25, call=True):
     """
     Pricing using Fast Fourier Transform (Carr-Madan 1999).
-    Adapted from resources/OptionFFT/optionfft.py.
-    
     Args:
         K (float): Target Strike (used for interpolation)
         S0 (float): Spot Price
@@ -46,7 +43,6 @@ def fft_pricer(K, S0, T, r, char_func, args=(), alpha=1.5, N=4096, eta=0.25, cal
     v = V
     complex_u = v - (alpha + 1) * 1j
     
-    # Call char_func. NOTE: We pass S0 as last argument to match our new convention
     # char_func signature: (u, T, r, *args, S0)
     phi_val = char_func(complex_u, T, r, *args, S0)
     
