@@ -13,6 +13,7 @@ env/
 
 # Project-specific exclusions
 others/
+resources/
 
 # IDE
 .vscode/

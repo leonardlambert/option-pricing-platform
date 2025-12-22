@@ -1,6 +1,6 @@
 # Options Pricing & Scenario Analysis Platform
 
-This browser application is a desk-oriented options analytics tool focused on **pricing, valuation, and middle-office use cases**.  
+This browser application is an options analytics tool focused on **pricing, valuation, and middle-office use cases**.  
 
 It emphasizes robustness, numerical stability, and realistic market constraints rather than academic sophistication.
 
@@ -52,13 +52,20 @@ All core functionality works identically in demo mode.
 
 ---
 
-## Documentation & References
+## References
 
-Mathematical derivations, model assumptions, and numerical notes are available as linked PDFs for reference and auditability, without cluttering the UI.
+- Black, F. & Scholes, M. (1973). **The Pricing of Options and Corporate Liabilities**. *Journal of Political Economy*, 81(3), 637–654.  
+  https://doi.org/10.1086/260062
+
+- Carr, P. & Madan, D. (1999). **Option Valuation Using the Fast Fourier Transform**. *The Journal of Computational Finance*, 2(4), 61–73.  
+  https://doi.org/10.21314/jcf.1999.043
+
+- Xiao, S., Ma, S., Li, G., & Mukhopadhyay, S. K. (2016). **European Option Pricing With a Fast Fourier Transform Algorithm for Big Data Analysis**. *IEEE Transactions on Industrial Informatics*, 12(3), 1219–1231.  
+  https://doi.org/10.1109/TII.2015.2500885
 
 ---
 
 ## Disclaimer
 
 This project is for **educational and demonstration purposes only**.  
-It is not intended for live trading or production use.
+It is not intended for live trading or production use, and should not be used as a basis for any trading decisions. I am not responsible for any losses or damages resulting from the use of this application.
