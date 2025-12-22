@@ -16,8 +16,6 @@ def validate_api_key(api_key):
     """
     client = RESTClient(api_key)
     try:
-        # Try fetching a very basic aggregate for a common ticker
-        # If it doesn't raise an Auth error, it's likely valid.
         _ = client.list_aggs("AAPL", 1, "day", "2023-01-01", "2023-01-02")
         return True, "API Key is valid."
     except Exception as e:
@@ -77,7 +75,6 @@ def get_option_aggregates(ticker, expiration_date, option_type, strike, start_da
             return pd.DataFrame(), f"Local Data Error: {str(e)}"
 
     client = RESTClient(get_api_key())
-    # ... (rest of the original Live API logic)
     exp_str = expiration_date.strftime("%y%m%d")
     strike_val = int(strike*1000)
     strike_str = f"{strike_val:08d}"
@@ -124,7 +121,6 @@ def get_option_previous_close(ticker, expiration_date, option_type, strike):
             if res.empty:
                 return pd.DataFrame(), "No data in preloaded CSV", contract_symbol
             
-            # The app expects the "latest" available in the CSV as the "previous close" for simulation
             latest = res.tail(1).copy()
             
             cols = ["Date", "Open", "High", "Low", "Close", "Volume"]
@@ -187,7 +183,6 @@ def get_stock_history_vol(ticker, end_date_str, retries=10, shift_days=0):
             return None, None, f"Local Error: {str(e)}"
 
     client = RESTClient(get_api_key())
-    # ... (rest of the original Live API logic)
     dt_end = datetime.strptime(end_date_str,("%Y-%m-%d"))
     dt_start = (dt_end - timedelta(days=365)) + timedelta(days=shift_days)
     start_str = dt_start.strftime("%Y-%m-%d")

@@ -5,8 +5,6 @@ import numpy as np
 def plot_spread_analysis(S_range, spread_values, profit, greeks_dict, view_mode="Profit"):
     """
     Plot Spread Value, Profit, and Greeks using Plotly.
-    greeks_dict: {'Delta': [...], 'Gamma': [...], ...}
-    view_mode: 'Profit' or 'Payoff'
     """
     
     # Determine labels based on view mode
@@ -20,42 +18,38 @@ def plot_spread_analysis(S_range, spread_values, profit, greeks_dict, view_mode=
         maturity_label = "Payoff at Maturity"
         y_axis_label = "Payoff ($)"
         title = "Spread Payoff"
-    
-    # 1. Main Payoff/Profit Plot
+
     fig_main = go.Figure()
     fig_main.add_trace(go.Scatter(x=S_range, y=spread_values, mode='lines', name=immediate_label, line=dict(color='#1f77b4', width=2)))
     fig_main.add_trace(go.Scatter(x=S_range, y=profit, mode='lines', name=maturity_label, line=dict(dash='dash', color='#ff7f0e')))
     
     
-    # Find break-even points at maturity (where profit/payoff crosses zero)
     breakeven_points = []
     for i in range(len(profit) - 1):
-        # Check if profit crosses zero between consecutive points
         if (profit[i] <= 0 and profit[i+1] > 0) or (profit[i] >= 0 and profit[i+1] < 0):
-            # Linear interpolation to find exact crossing point
             if profit[i+1] != profit[i]:
                 t = -profit[i] / (profit[i+1] - profit[i])
                 breakeven_spot = S_range[i] + t * (S_range[i+1] - S_range[i])
                 breakeven_points.append(breakeven_spot)
     
-    # Add break-even line (dashed red) - only show in Profit mode
+
     if view_mode == "Profit":
         fig_main.add_hline(y=0, line_dash="dash", line_color="red", line_width=2, 
                            annotation_text="Break-even", annotation_position="top right")
         
-        # Add markers for break-even points at maturity
+
         if breakeven_points:
             for idx, be_spot in enumerate(breakeven_points):
                 fig_main.add_vline(x=be_spot, line_dash="dot", line_color="rgba(255, 0, 0, 0.3)", 
                                   annotation_text=f"BE: ${be_spot:.2f}", 
                                   annotation_position="top")
     else:
-        # In Payoff mode, just add a subtle zero line
+  
         fig_main.add_hline(y=0, line_dash="dot", line_color="gray", line_width=1)
     
     fig_main.update_layout(title=title, xaxis_title="Spot Price", yaxis_title=y_axis_label, template="plotly_dark")
 
-    # 2. Greeks Subplots
+
     fig_greeks = make_subplots(rows=3, cols=2, subplot_titles=["Delta", "Gamma", "Theta", "Vega", "Rho"])
     
     greek_names = ["Delta", "Gamma", "Theta", "Vega", "Rho"]
