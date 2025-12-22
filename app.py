@@ -405,9 +405,26 @@ with tabs[2]:
                 T_sim = 1.0
                 process = "GBM"
                 
-                n_paths = st.number_input("Paths", 1000, 50000, 5000)
+                n_paths = st.number_input("Paths", 1000, 50000, 5000, key="pnl_n_paths")
+                
+                # Clear results if paths changed or if selected strategies changed
+                if "last_n_paths" not in st.session_state:
+                    st.session_state.last_n_paths = n_paths
+                if "last_selected_indices" not in st.session_state:
+                    st.session_state.last_selected_indices = selected_indices.copy()
+                
+                # Check if anything changed
+                paths_changed = st.session_state.last_n_paths != n_paths
+                selection_changed = st.session_state.last_selected_indices != selected_indices
+                
+                if paths_changed or selection_changed:
+                    st.session_state.last_n_paths = n_paths
+                    st.session_state.last_selected_indices = selected_indices.copy()
+                    if "pnl_results" in st.session_state:
+                        del st.session_state["pnl_results"]
+                        st.info("⚠️ Parameters changed. Click 'Run Monte Carlo' to generate new results.")
                     
-                if st.button("Run Monte Carlo"):
+                if st.button("Run Monte Carlo", key="run_mc_pnl"):
                     
                     first_strat = st.session_state.book[selected_indices[0]]
                     S0_sim = first_strat["S0"]
@@ -426,7 +443,8 @@ with tabs[2]:
                         pnl = np.zeros(n_paths)
                         initial_book_value = 0.0
                         
-                        #use only selected strategies
+                        # Calculate initial book value (premium paid/received at t=0)
+                        # Positive for long positions (you pay), negative for short positions (you receive)
                         for idx in selected_indices:
                             strat = st.session_state.book[idx]
                             for leg in strat["legs"]:
@@ -434,6 +452,7 @@ with tabs[2]:
                                 p = leg.get("premium", black_scholes_price(strat["S0"], leg["strike"], strat["T"], strat["r"], strat["sigma"], leg["type"]))
                                 initial_book_value += leg["position"] * p
                         
+                        # Calculate PnL for each simulated path
                         for i in range(n_paths):
                             spot = S_T[i]
                             val_t = 0.0
@@ -442,28 +461,75 @@ with tabs[2]:
                                 remaining_t = max(0, strat["T"] - T_sim)
                                 for leg in strat["legs"]:
                                     if remaining_t == 0:
+                                        # At expiration: use intrinsic value
                                         val = max(0, spot - leg["strike"]) if leg["type"] == "C" else max(0, leg["strike"] - spot)
                                     else:
+                                        # Before expiration: use Black-Scholes value
                                         val = black_scholes_price(spot, leg["strike"], remaining_t, strat["r"], strat["sigma"], leg["type"])
                                     val_t += leg["position"] * val
-                            pnl[i] = (val_t * np.exp(-r_sim * T_sim) - initial_book_value)
+                            # PnL = Current value - Initial premium paid/received
+                            pnl[i] = val_t - initial_book_value
                         
-                        pnl_percent = (pnl / (initial_book_value if initial_book_value!=0 else 1.0)) * 100
+                        # Calculate percentage returns
+                        # Use absolute value of initial book value to avoid distorted percentages
+                        # when combining debit and credit spreads
+                        abs_initial_value = abs(initial_book_value)
+                        
+                        if abs_initial_value > 0.01:  # Only calculate % if meaningful initial investment
+                            pnl_percent = (pnl / abs_initial_value) * 100
+                        else:
+                            # If initial book value is near zero (e.g., balanced debit/credit spreads),
+                            # percentage returns don't make sense - just use dollar PnL
+                            pnl_percent = pnl  # Will display as dollar amounts
                         
                         st.session_state["pnl_results"] = {
                             "pnl_percent": pnl_percent,
                             "process": process,
-                            "pnl": pnl
+                            "pnl": pnl,
+                            "initial_value": initial_book_value,
+                            "abs_initial_value": abs_initial_value,
+                            "use_percentage": abs_initial_value > 0.01
                         }
+                        st.success(f"✅ Simulation complete! ({n_paths:,} paths)")
+                        st.rerun()
 
                 if "pnl_results" in st.session_state:
                     results = st.session_state["pnl_results"]
+                    use_pct = results.get("use_percentage", True)
+                    abs_init = results.get("abs_initial_value", 1.0)
+                    init_val = results.get("initial_value", 0.0)
+                    
+                    # Display initial investment info
+                    if init_val > 0:
+                        st.info(f"📊 Initial Investment: ${abs_init:.2f} (Debit - you paid)")
+                    elif init_val < 0:
+                        st.info(f"📊 Initial Investment: ${abs_init:.2f} (Credit - you received)")
+                    else:
+                        st.info(f"📊 Initial Investment: ~$0 (Balanced position)")
+                    
                     st.plotly_chart(plot_simulation_results(results["pnl_percent"], results["process"]))
-                    c_metrics1, c_metrics2 = st.columns(2)
+                    
+                    # Calculate metrics
+                    mean_pnl = np.mean(results['pnl'])
+                    var_95 = np.percentile(results['pnl'], 5)
+                    cvar_95 = np.mean(results['pnl'][results['pnl'] <= var_95])
+                    
+                    c_metrics1, c_metrics2, c_metrics3 = st.columns(3)
                     with c_metrics1:
-                        st.metric("VaR (95%)", f"{np.percentile(results['pnl'], 5):.2f}")
+                        if use_pct:
+                            st.metric("Mean PnL", f"${mean_pnl:.2f}", f"{(mean_pnl/abs_init)*100:.2f}%")
+                        else:
+                            st.metric("Mean PnL", f"${mean_pnl:.2f}")
                     with c_metrics2:
-                        st.metric("CVaR (95%)", f"{np.mean(results['pnl'][results['pnl'] <= np.percentile(results['pnl'], 5)]):.2f}")
+                        if use_pct:
+                            st.metric("VaR (95%)", f"${var_95:.2f}", f"{(var_95/abs_init)*100:.2f}%")
+                        else:
+                            st.metric("VaR (95%)", f"${var_95:.2f}")
+                    with c_metrics3:
+                        if use_pct:
+                            st.metric("CVaR (95%)", f"${cvar_95:.2f}", f"{(cvar_95/abs_init)*100:.2f}%")
+                        else:
+                            st.metric("CVaR (95%)", f"${cvar_95:.2f}")
 
 #TAB 4: strategy stress testing
 with tabs[3]:
