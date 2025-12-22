@@ -1,6 +1,8 @@
 import numpy as np
 from numba import njit
 
+#Uses numba for faster simulations
+
 @njit
 def simulate_gbm_paths(S0, r, sigma, T, steps, n_paths):
     """
