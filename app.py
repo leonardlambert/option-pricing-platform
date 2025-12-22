@@ -290,16 +290,42 @@ with tabs[1]:
                 payoff_vals[idx] += leg["position"] * intrinsic
 
         my_bar.empty()
-        profit_vals = payoff_vals - net_premium
         
-        fig1, fig2 = plot_spread_analysis(S_range, spread_vals, profit_vals, greeks_agg)
+        # Adjust spread values to show profit (value - premium)
+        immediate_profit_vals = spread_vals - net_premium
+        profit_at_maturity_vals = payoff_vals - net_premium
+        
+        # Get view mode from session state or default to Profit
+        if "view_mode" not in st.session_state:
+            st.session_state.view_mode = "Profit"
+        
+        # Prepare data based on view mode
+        if st.session_state.view_mode == "Profit":
+            immediate_vals = immediate_profit_vals
+            maturity_vals = profit_at_maturity_vals
+        else:  # Payoff
+            immediate_vals = spread_vals
+            maturity_vals = payoff_vals
+        
+        fig1, fig2 = plot_spread_analysis(S_range, immediate_vals, maturity_vals, greeks_agg, st.session_state.view_mode)
         
         st.plotly_chart(fig1, key="spread_plot_1", width='stretch')
+        
+        # Toggle for Profit vs Payoff view (below the graph)
+        view_mode = st.radio("Display Mode", ["Profit", "Payoff"], index=0 if st.session_state.view_mode == "Profit" else 1, horizontal=True, 
+                            help="Profit: adjusted for premium paid/received | Payoff: intrinsic value only", key="view_mode_radio")
+        
+        # Update session state if changed
+        if view_mode != st.session_state.view_mode:
+            st.session_state.view_mode = view_mode
+            st.rerun()
         
         with st.expander("View Greeks"):
             st.plotly_chart(fig2, key="spread_plot_2", width='stretch')
             
-        st.info(f"Net Premium (Black-Scholes): ${net_premium:.2f}")
+        # Display net premium with DEBIT/CREDIT label
+        premium_label = "(DEBIT)" if net_premium > 0 else "(CREDIT)" if net_premium < 0 else ""
+        st.info(f"Net Premium (Black-Scholes): ${abs(net_premium):.2f} {premium_label}")
 
 #TAB 3 : strategy PnL distribution
 with tabs[2]:
@@ -374,13 +400,12 @@ with tabs[2]:
             if not selected_indices:
                 st.warning("Please select at least one strategy to run simulation.")
             else:
-                c_sim1, c_sim2 = st.columns(2)
-                with c_sim1:
-                    n_paths = st.number_input("Paths", 1000, 50000, 5000)
-                    steps = st.number_input("Steps", 10, 365, 50)
-                    T_sim = st.number_input("Horizon (Years)", 0.1, 5.0, 1.0)
-                with c_sim2:
-                    process = st.selectbox("Process", ["GBM", "Variance Gamma", "Merton Jump Diffusion"])
+                # Lock parameters to defaults
+                steps = 50
+                T_sim = 1.0
+                process = "GBM"
+                
+                n_paths = st.number_input("Paths", 1000, 50000, 5000)
                     
                 if st.button("Run Monte Carlo"):
                     

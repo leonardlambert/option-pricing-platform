@@ -1,6 +1,7 @@
 # Options Pricing & Scenario Analysis Platform
 
 This browser application is a desk-oriented options analytics tool focused on **pricing, valuation, and middle-office use cases**.  
+
 It emphasizes robustness, numerical stability, and realistic market constraints rather than academic sophistication.
 
 ---

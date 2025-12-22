@@ -2,21 +2,58 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
 
-def plot_spread_analysis(S_range, spread_values, profit, greeks_dict):
+def plot_spread_analysis(S_range, spread_values, profit, greeks_dict, view_mode="Profit"):
     """
     Plot Spread Value, Profit, and Greeks using Plotly.
     greeks_dict: {'Delta': [...], 'Gamma': [...], ...}
+    view_mode: 'Profit' or 'Payoff'
     """
+    
+    # Determine labels based on view mode
+    if view_mode == "Profit":
+        immediate_label = "Profit Now (mark-to-market PnL)"
+        maturity_label = "Profit at Maturity"
+        y_axis_label = "Profit ($)"
+        title = "Spread Profit"
+    else:  # Payoff
+        immediate_label = "Payoff Now (mark-to-market)"
+        maturity_label = "Payoff at Maturity"
+        y_axis_label = "Payoff ($)"
+        title = "Spread Payoff"
     
     # 1. Main Payoff/Profit Plot
     fig_main = go.Figure()
-    fig_main.add_trace(go.Scatter(x=S_range, y=spread_values, mode='lines', name='BSM Value'))
-    fig_main.add_trace(go.Scatter(x=S_range, y=profit, mode='lines', name='ProfitAtMaturity', line=dict(dash='dash')))
+    fig_main.add_trace(go.Scatter(x=S_range, y=spread_values, mode='lines', name=immediate_label, line=dict(color='#1f77b4', width=2)))
+    fig_main.add_trace(go.Scatter(x=S_range, y=profit, mode='lines', name=maturity_label, line=dict(dash='dash', color='#ff7f0e')))
     
-    # Zero line
-    fig_main.add_hline(y=0, line_dash="dot", annotation_text="Break-even", annotation_position="bottom right")
     
-    fig_main.update_layout(title="Spread Analysis: Value & Profit", xaxis_title="Spot Price", yaxis_title="Value", template="plotly_dark")
+    # Find break-even points at maturity (where profit/payoff crosses zero)
+    breakeven_points = []
+    for i in range(len(profit) - 1):
+        # Check if profit crosses zero between consecutive points
+        if (profit[i] <= 0 and profit[i+1] > 0) or (profit[i] >= 0 and profit[i+1] < 0):
+            # Linear interpolation to find exact crossing point
+            if profit[i+1] != profit[i]:
+                t = -profit[i] / (profit[i+1] - profit[i])
+                breakeven_spot = S_range[i] + t * (S_range[i+1] - S_range[i])
+                breakeven_points.append(breakeven_spot)
+    
+    # Add break-even line (dashed red) - only show in Profit mode
+    if view_mode == "Profit":
+        fig_main.add_hline(y=0, line_dash="dash", line_color="red", line_width=2, 
+                           annotation_text="Break-even", annotation_position="top right")
+        
+        # Add markers for break-even points at maturity
+        if breakeven_points:
+            for idx, be_spot in enumerate(breakeven_points):
+                fig_main.add_vline(x=be_spot, line_dash="dot", line_color="rgba(255, 0, 0, 0.3)", 
+                                  annotation_text=f"BE: ${be_spot:.2f}", 
+                                  annotation_position="top")
+    else:
+        # In Payoff mode, just add a subtle zero line
+        fig_main.add_hline(y=0, line_dash="dot", line_color="gray", line_width=1)
+    
+    fig_main.update_layout(title=title, xaxis_title="Spot Price", yaxis_title=y_axis_label, template="plotly_dark")
 
     # 2. Greeks Subplots
     fig_greeks = make_subplots(rows=3, cols=2, subplot_titles=["Delta", "Gamma", "Theta", "Vega", "Rho"])
