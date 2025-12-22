@@ -35,20 +35,6 @@ def phi_merton(u, T, r, sigma, lamb, mu_j, sigma_j, S0):
     # Diffusion part: -0.5 * sigma^2 * u^2 * T
     term2 = -0.5 * sigma**2 * u**2 * T
     
-    # Jump part: lambda * T * (phi_jump(u) - 1)
-    # Jump size J ~ N(mu_j, sigma_j). ln(J) is Normal? No, J is jump in log price typically?
-    # In Merton model: S_t = S_{t-} * Y. Y is Lognormal. X = ln(Y) ~ N(mu_j, sigma_j).
-    # d(ln S) ... + ln(Y) dN.
-    # CF of sum(ln Y) is exp(lambda T (E[e^{iu ln Y}] - 1))
-    # E[e^{iu X}] = exp(iu mu_j - 0.5 sigma_j^2 u^2)
-    
     jump_part = lamb * T * (np.exp(1j * u * mu_j - 0.5 * sigma_j**2 * u**2) - 1)
-    
-    # CAUTION: optionfft.py does slightly different formula check?
-    # optionfft.py: jump_term = lamb * T * (np.exp(1j * u * mu_j - 0.5 * sigma_j**2 * u**2) - 1) 
-    # That matches.
-    # But optionfft.py definition of MJD? It doesn't have MJD class!
-    # It has GeometricBrownianMotion and VarianceGamma. 
-    # I should stick to my previous correct MJD formula but adapted for S0.
     
     return np.exp(term1 + term2 + jump_part)
