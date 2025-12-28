@@ -131,7 +131,7 @@ st.markdown("""
 st.title("Option Pricing & Scenario Analysis Platform")
 
 #sections list
-tabs = st.tabs(["Option Pricing & Greeks", "Strategy Builder", "Strategy PnL Distribution", "Strategy Stress Testing", "Volatility Smile", "Volatility Surface"])
+tabs = st.tabs(["Option Pricing & Greeks", "Strategy Builder", "Strategy PnL Distribution", "Stress Testing", "Volatility Smile", "Volatility Surface"])
 
 #TAB 1 : single option pricing
 with tabs[0]:
@@ -334,13 +334,19 @@ with tabs[2]:
         st.warning("Book is empty. Add strategies in 'Strategy Builder' tab first.")
     else:
         
-        if "selected_strategies" not in st.session_state:
-            st.session_state.selected_strategies = [True] * len(st.session_state.book)
+        if "pnl_selected_strategies" not in st.session_state or not isinstance(st.session_state.pnl_selected_strategies, dict):
+            st.session_state.pnl_selected_strategies = {strat["id"]: True for strat in st.session_state.book}
         
-        if len(st.session_state.selected_strategies) != len(st.session_state.book):
-            st.session_state.selected_strategies = [True] * len(st.session_state.book)
-
-        st.info(f"Total Strategies: {len(st.session_state.book)}")
+        # Sync selection dict with book (in case strategies were added/deleted elsewhere)
+        current_ids = {strat["id"] for strat in st.session_state.book}
+        # Add missing defaults
+        for sid in current_ids:
+            if sid not in st.session_state.pnl_selected_strategies:
+                st.session_state.pnl_selected_strategies[sid] = True
+        # Remove deleted
+        keys_to_del = [k for k in st.session_state.pnl_selected_strategies if k not in current_ids]
+        for k in keys_to_del:
+            del st.session_state.pnl_selected_strategies[k]
 
         entries_to_delete = []
         
@@ -348,19 +354,20 @@ with tabs[2]:
             name = strat.get("name", "Untitled")
             timestamp = strat.get("timestamp", "N/A")
             params = f"S0={strat['S0']}, T={strat['T']}, r={strat['r']}, σ={strat['sigma']}"
+            sid = strat["id"]
             
             with st.expander(f"📍 **{name}** | 🕒 {timestamp}"):
                 c_sel, c_details, c_action = st.columns([0.5, 3.5, 1])
                 with c_sel:
-                    current_sel = st.checkbox("Select Strategy", value=st.session_state.selected_strategies[idx], key=f"pnl_sel_{idx}_{strat['id']}", label_visibility="collapsed")
-                    if current_sel != st.session_state.selected_strategies[idx]:
-                        st.session_state.selected_strategies[idx] = current_sel
+                    current_sel = st.checkbox("Select Strategy", value=st.session_state.pnl_selected_strategies.get(sid, True), key=f"pnl_sel_{idx}_{sid}", label_visibility="collapsed")
+                    if current_sel != st.session_state.pnl_selected_strategies.get(sid, True):
+                        st.session_state.pnl_selected_strategies[sid] = current_sel
                         if "pnl_results" in st.session_state:
                             del st.session_state["pnl_results"]
                         st.rerun()
+                
                 with c_details:
                     st.write(f"**Parameters**: {params}")
-                    
                     leg_data = []
                     for leg in strat["legs"]:
                         pos_str = "Long (+1)" if leg["position"] == 1 else "Short (-1)"
@@ -374,20 +381,23 @@ with tabs[2]:
                     if st.button("Delete Strategy", key=f"del_{idx}"):
                         entries_to_delete.append(idx)
         
+        # UI controls below the list
+        num_selected = sum(st.session_state.pnl_selected_strategies.values())
+        st.info(f"Total Strategies: {len(st.session_state.book)} | Selected: {num_selected}")
+        
         if entries_to_delete:
             for i in sorted(entries_to_delete, reverse=True):
+                sid_to_del = st.session_state.book[i]["id"]
                 delete_strategy(i)
-                
-                if "selected_strategies" in st.session_state and len(st.session_state.selected_strategies) > i:
-                    st.session_state.selected_strategies.pop(i)
+                if sid_to_del in st.session_state.pnl_selected_strategies:
+                    del st.session_state.pnl_selected_strategies[sid_to_del]
             if "pnl_results" in st.session_state:
                 del st.session_state["pnl_results"]
             st.rerun()
 
         if st.button("Clear Entire Book"):
             reset_book()
-            if "selected_strategies" in st.session_state:
-                st.session_state.selected_strategies = []
+            st.session_state.pnl_selected_strategies = {}
             if "pnl_results" in st.session_state:
                 del st.session_state["pnl_results"]
             st.rerun()
@@ -395,34 +405,24 @@ with tabs[2]:
         st.divider()
         #simulation part !!! needs at least one strategy selected
         if st.session_state.book:
-            selected_indices = [i for i, sel in enumerate(st.session_state.selected_strategies) if sel]
+            selected_indices = [i for i, s in enumerate(st.session_state.book) if st.session_state.pnl_selected_strategies.get(s["id"], True)]
             
             if not selected_indices:
                 st.warning("Please select at least one strategy to run simulation.")
             else:
-                # Lock parameters to defaults
+                # Simulation parameters
                 steps = 50
                 T_sim = 1.0
                 process = "GBM"
                 
                 n_paths = st.number_input("Paths", 1000, 50000, 5000, key="pnl_n_paths")
                 
-                # Clear results if paths changed or if selected strategies changed
-                if "last_n_paths" not in st.session_state:
-                    st.session_state.last_n_paths = n_paths
-                if "last_selected_indices" not in st.session_state:
-                    st.session_state.last_selected_indices = selected_indices.copy()
+                # Check for stale results (simple persistence)
+                if "pnl_results" in st.session_state and st.session_state.get("pnl_last_n_paths") != n_paths:
+                    del st.session_state["pnl_results"]
+                    st.info("⚠️ Paths changed. Click 'Run Monte Carlo' to refresh.")
                 
-                # Check if anything changed
-                paths_changed = st.session_state.last_n_paths != n_paths
-                selection_changed = st.session_state.last_selected_indices != selected_indices
-                
-                if paths_changed or selection_changed:
-                    st.session_state.last_n_paths = n_paths
-                    st.session_state.last_selected_indices = selected_indices.copy()
-                    if "pnl_results" in st.session_state:
-                        del st.session_state["pnl_results"]
-                        st.info("⚠️ Parameters changed. Click 'Run Monte Carlo' to generate new results.")
+                st.session_state.pnl_last_n_paths = n_paths
                     
                 if st.button("Run Monte Carlo", key="run_mc_pnl"):
                     
@@ -507,7 +507,11 @@ with tabs[2]:
                     else:
                         st.info(f"📊 Initial Investment: ~$0 (Balanced position)")
                     
-                    st.plotly_chart(plot_simulation_results(results["pnl_percent"], results["process"]))
+                    mean_pnl = np.mean(results['pnl'])
+                    variation_pct = (mean_pnl / abs_init) * 100 if abs_init > 0.01 else 0.0
+                    mean_label = f"Mean: ${mean_pnl:.2f} | {variation_pct:.2f}%"
+                    
+                    st.plotly_chart(plot_simulation_results(results["pnl"], results["process"], mean_label=mean_label))
                     
                     # Calculate metrics
                     mean_pnl = np.mean(results['pnl'])
@@ -537,22 +541,28 @@ with tabs[3]:
         st.warning("Book is empty. Add strategies in 'Strategy Builder' tab first.")
     else:
         
-        if "selected_strategies" not in st.session_state:
-            st.session_state.selected_strategies = [True] * len(st.session_state.book)
+        if "stress_selected_strategies" not in st.session_state or not isinstance(st.session_state.stress_selected_strategies, dict):
+            st.session_state.stress_selected_strategies = {strat["id"]: True for strat in st.session_state.book}
         
-        if len(st.session_state.selected_strategies) != len(st.session_state.book):
-            st.session_state.selected_strategies = [True] * len(st.session_state.book)
-
-        st.info(f"Total Strategies: {len(st.session_state.book)}")
+        # Sync selection dict with book
+        current_ids = {strat["id"] for strat in st.session_state.book}
+        for sid in current_ids:
+            if sid not in st.session_state.stress_selected_strategies:
+                st.session_state.stress_selected_strategies[sid] = True
+        keys_to_del = [k for k in st.session_state.stress_selected_strategies if k not in current_ids]
+        for k in keys_to_del:
+            del st.session_state.stress_selected_strategies[k]
 
         for idx, strat in enumerate(st.session_state.book):
             name = strat.get("name", "Untitled")
-            with st.expander(f"📍 **{name}**"):
+            timestamp = strat.get("timestamp", "N/A")
+            sid = strat["id"]
+            with st.expander(f"📍 **{name}** | 🕒 {timestamp}"):
                 c_sel_st, c_details_st = st.columns([0.5, 4.5])
                 with c_sel_st:
-                    current_sel_st = st.checkbox("Select Strategy", value=st.session_state.selected_strategies[idx], key=f"stress_sel_{idx}_{strat['id']}", label_visibility="collapsed")
-                    if current_sel_st != st.session_state.selected_strategies[idx]:
-                        st.session_state.selected_strategies[idx] = current_sel_st
+                    current_sel_st = st.checkbox("Select Strategy", value=st.session_state.stress_selected_strategies.get(sid, True), key=f"stress_sel_{idx}_{sid}", label_visibility="collapsed")
+                    if current_sel_st != st.session_state.stress_selected_strategies.get(sid, True):
+                        st.session_state.stress_selected_strategies[sid] = current_sel_st
                         if "pnl_results" in st.session_state:
                             del st.session_state["pnl_results"]
                         if "stress_results" in st.session_state:
@@ -569,11 +579,16 @@ with tabs[3]:
                         leg_data.append({"Position": pos_str, "Type": type_str, "Strike": strike, "Premium": prem})
                     st.table(pd.DataFrame(leg_data))
 
+        # UI controls below the list
+        num_selected_st = sum(st.session_state.stress_selected_strategies.values())
+        st.info(f"Total Strategies: {len(st.session_state.book)} | Selected: {num_selected_st}")
+
         st.divider()
         
         c_p1, c_p2 = st.columns([1, 2])
         with c_p1:
             st.subheader("Scenario Parameters")
+            # (quick scenarios remain same)
             
             #quick scenarios
             st.caption("Quick Scenarios")
@@ -613,7 +628,7 @@ with tabs[3]:
 
         with c_p2:
             st.subheader("Scenario Results")
-            selected_indices = [i for i, sel in enumerate(st.session_state.selected_strategies) if sel]
+            selected_indices = [i for i, s in enumerate(st.session_state.book) if st.session_state.stress_selected_strategies.get(s["id"], True)]
             
             if not selected_indices:
                 st.warning("Please select at least one strategy to run stress test.")
@@ -637,7 +652,7 @@ with tabs[3]:
                         price_after += leg["position"] * p_after
 
                 variation = price_after - price_before
-                st.metric("Spread Price Variation", f"${variation:.2f}", help="Price After Stress - Price Before Stress")
+                st.metric("Market Value Variation", f"${variation:.2f}", help="Estimated impact of scenario on book market value")
                 
                 c_m1, c_m2 = st.columns(2)
                 with c_m1:
@@ -674,8 +689,7 @@ with tabs[3]:
                 c_attr3.metric("Vega", f"${attr_totals['Vega']:.2f}")
                 c_attr4.metric("Theta", f"${attr_totals['Theta']:.2f}")
                 
-                st.metric("PnL Residual", f"${residual:.2f}", help="Total Variation - Sum of explained Greeks")
-            
+                st.metric("PnL Residual", f"${residual:.2f}", help="Total Variation - Sum of explained Greeks")             
 
 
 #TAB 5: volatility smile

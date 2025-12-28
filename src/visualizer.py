@@ -66,26 +66,29 @@ def plot_spread_analysis(S_range, spread_values, profit, greeks_dict, view_mode=
     
     return fig_main, fig_greeks
 
-def plot_simulation_results(pnl_percent, process_name):
+def plot_simulation_results(pnl_data, process_name, mean_label=None):
     """
     Plot histogram of PnL from Monte Carlo.
     """
     fig = go.Figure()
     fig.add_trace(go.Histogram(
-        x=pnl_percent, 
+        x=pnl_data, 
         nbinsx=50, 
         name='PnL Distribution',
         marker_color='#1f77b4',
         opacity=0.75
     ))
     
-    mean_val = np.mean(pnl_percent)
-    fig.add_vline(x=mean_val, line_dash="dash", line_color="red", annotation_text=f"Mean: {mean_val:.2f}%")
-    fig.add_vline(x=0, line_color="white", annotation_text="0%")
+    mean_val = np.mean(pnl_data)
+    if mean_label is None:
+        mean_label = f"Mean: {mean_val:.2f}"
+    
+    fig.add_vline(x=mean_val, line_dash="dash", line_color="red", annotation_text=mean_label)
+    fig.add_vline(x=0, line_color="white", annotation_text="0")
     
     fig.update_layout(
         title=f"{process_name} - PnL Distribution",
-        xaxis_title="PnL (%)",
+        xaxis_title="PnL ($)",
         yaxis_title="Frequency",
         template="plotly_dark"
     )
