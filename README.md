@@ -10,7 +10,7 @@ It emphasizes robustness, numerical stability, and realistic market constraints 
 
 ### Core Functionality
 - **Option pricing & Greeks**
-  - Pricing using Black–Scholes-Merton, Variance Gamma, and Merton models
+  - Pricing using standard Black–Scholes-Merton, and exotic Variance Gamma / Merton Jump Diffusion models
   - Greeks calculation using closed-form expressions and finite differences
 
 - **Strategy builder and Spread visualization**

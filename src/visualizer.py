@@ -41,7 +41,7 @@ def plot_spread_analysis(S_range, spread_values, profit, greeks_dict, view_mode=
         if breakeven_points:
             for idx, be_spot in enumerate(breakeven_points):
                 fig_main.add_vline(x=be_spot, line_dash="dot", line_color="rgba(255, 0, 0, 0.3)", 
-                                  annotation_text=f"BE: ${be_spot:.2f}", 
+                                  annotation_text=f"breakeven: ${be_spot:.2f}", 
                                   annotation_position="top")
     else:
   

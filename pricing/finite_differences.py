@@ -38,7 +38,7 @@ def compute_greeks_fd(S, K, T, r, sigma, option_type, model, model_params=None):
             theta = model_params.get('theta', -0.1)
             nu = model_params.get('nu', 0.2)
             return fft_pricer(k, s, t, rate, phi_vg, args=(vol, theta, nu), call=call)
-        elif model == "Merton":
+        elif model == "Merton Jump Diffusion":
             lamb = model_params.get('lamb', 0.1)
             mu_j = model_params.get('mu_j', -0.05)
             sigma_j = model_params.get('sigma_j', 0.2)

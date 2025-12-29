@@ -147,13 +147,13 @@ with tabs[0]:
         sigma = st.number_input("Volatility (σ)", value=0.2)
         option_type = st.selectbox("Type", ["C", "P"])
     with col4:
-        model = st.selectbox("Pricing Model", ["Black-Scholes-Merton", "Variance Gamma", "Merton"])
+        model = st.selectbox("Pricing Model", ["Black-Scholes-Merton", "Variance Gamma", "Merton Jump Diffusion"])
         
         #inof about the models
         model_info = {
             "Black-Scholes-Merton": "**Stochastic Family:** GBM | **Pricing Logic:** Closed Form",
             "Variance Gamma": "**Stochastic Family:** Lévy Process | **Pricing Logic:** Fast Fourier Transform",
-            "Merton": "**Stochastic Family:** Jump Diffusion | **Pricing Logic:** Fast Fourier Transform"
+            "Merton Jump Diffusion": "**Stochastic Family:** Jump Diffusion | **Pricing Logic:** Fast Fourier Transform"
         }
         st.caption(f"{model_info[model]}")
 
@@ -175,7 +175,7 @@ with tabs[0]:
             st.caption(f"Used VG Parameters: θ = {theta}, ν = {nu}")
             model_params = {'theta': theta, 'nu': nu}
             use_fd_greeks = True
-        elif model == "Merton":
+        elif model == "Merton Jump Diffusion":
             #hardcoded merton params for now
             lamb, mu_j, sigma_j = 0.1, -0.05, 0.2
             price = fft_pricer(K, S, T, r, phi_merton, args=(sigma, lamb, mu_j, sigma_j), call=(option_type=="C"))
@@ -186,7 +186,7 @@ with tabs[0]:
         #compute greeks
         if use_fd_greeks:
             #finite difference greeks for exotic price processes
-            model_name = "VG" if "Variance Gamma" in model else "Merton"
+            model_name = "VG" if "Variance Gamma" in model else "Merton Jump Diffusion"
             greeks = compute_greeks_fd(S, K, T, r, sigma, option_type, model_name, model_params)
             delta, gamma, theta_g, vega, rho = greeks['delta'], greeks['gamma'], greeks['theta'], greeks['vega'], greeks['rho']
         else:
