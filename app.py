@@ -233,20 +233,22 @@ with tabs[1]:
             l_strike = c_strike.number_input("Strike", 50.0, 200.0, 100.0, key=f"l_strike_{i}")
             l_pos = c_pos.selectbox("Position", [1, -1], format_func=lambda x: "Long" if x==1 else "Short", key=f"l_pos_{i}")
             legs.append({"type": l_type, "strike": l_strike, "position": l_pos})
-            
-        st.divider()
-        strat_name = st.text_input("Strategy Name", value="My Strategy", placeholder="e.g. Iron Condor")
-        if st.button("💾 Save Strategy to Book"):
 
+        st.divider()
+        strat_name = st.text_input("Strategy Name", value="My Strategy", placeholder="e.g. Iron Condor", key="strat_name_input")
+        
+        if st.button("💾 Save Strategy"):
             save_legs = []
             for leg in legs:
+                # Use premiums calculated for saving
                 p = black_scholes_price(S0_spread, leg["strike"], T_spread, r_spread, sigma_spread, leg["type"])
                 leg_with_premium = leg.copy()
                 leg_with_premium["premium"] = round(p, 4)
                 save_legs.append(leg_with_premium)
             
             add_strategy_to_book(S0_spread, T_spread, r_spread, sigma_spread, save_legs, name=strat_name)
-            st.success(f"Strategy '{strat_name}' saved with leg premiums!")
+            st.toast(f"Strategy '{strat_name}' saved!")
+        
 
     with col_plot:
         
@@ -311,21 +313,24 @@ with tabs[1]:
         
         st.plotly_chart(fig1, key="spread_plot_1", width='stretch')
         
-        # Toggle for Profit vs Payoff view (below the graph)
+        # Toggle for Profit vs Payoff view
         view_mode = st.radio("Display Mode", ["Profit", "Payoff"], index=0 if st.session_state.view_mode == "Profit" else 1, horizontal=True, 
                             help="Profit: adjusted for premium paid/received | Payoff: intrinsic value only", key="view_mode_radio")
         
-        # Update session state if changed
         if view_mode != st.session_state.view_mode:
             st.session_state.view_mode = view_mode
             st.rerun()
+
+        net_prem_calc = 0.0
+        for leg in legs:
+            lp = black_scholes_price(S0_spread, leg["strike"], T_spread, r_spread, sigma_spread, leg["type"])
+            net_prem_calc += leg["position"] * lp
         
+        premium_label = "(DEBIT)" if net_prem_calc > 0 else "(CREDIT)" if net_prem_calc < 0 else ""
+        st.info(f"**Net Premium**: ${abs(net_prem_calc):.2f} {premium_label}")
+
         with st.expander("View Greeks"):
             st.plotly_chart(fig2, key="spread_plot_2", width='stretch')
-            
-        # Display net premium with DEBIT/CREDIT label
-        premium_label = "(DEBIT)" if net_premium > 0 else "(CREDIT)" if net_premium < 0 else ""
-        st.info(f"Net Premium (Black-Scholes): ${abs(net_premium):.2f} {premium_label}")
 
 #TAB 3 : strategy PnL distribution
 with tabs[2]:
@@ -395,7 +400,7 @@ with tabs[2]:
                 del st.session_state["pnl_results"]
             st.rerun()
 
-        if st.button("Clear Entire Book"):
+        if st.button("⚠️ Clear Entire Book"):
             reset_book()
             st.session_state.pnl_selected_strategies = {}
             if "pnl_results" in st.session_state:
@@ -490,12 +495,16 @@ with tabs[2]:
                             "abs_initial_value": abs_initial_value,
                             "use_percentage": abs_initial_value > 0.01
                         }
-                        st.success(f"✅ Simulation complete! ({n_paths:,} paths)")
+                        st.toast(f"✅ Simulation complete! ({n_paths:,} paths)")
                         st.rerun()
 
+                # Results Anchor Container
+                results_container = st.container()
+                
                 if "pnl_results" in st.session_state:
-                    results = st.session_state["pnl_results"]
-                    use_pct = results.get("use_percentage", True)
+                    with results_container:
+                        results = st.session_state["pnl_results"]
+                        use_pct = results.get("use_percentage", True)
                     abs_init = results.get("abs_initial_value", 1.0)
                     init_val = results.get("initial_value", 0.0)
                     
@@ -588,28 +597,27 @@ with tabs[3]:
         c_p1, c_p2 = st.columns([1, 2])
         with c_p1:
             st.subheader("Scenario Parameters")
-            # (quick scenarios remain same)
-            
-            #quick scenarios
-            st.caption("Quick Scenarios")
-            qs_cols = st.columns(5)
-            if qs_cols[0].button("Spot Shock"):
-                st.session_state.stress_spot = -10.0
-                st.rerun()
-            if qs_cols[1].button("Vol Shock"):
-                st.session_state.stress_vol = 10.0
-                st.rerun()
-            if qs_cols[2].button("Week Decay"):
-                st.session_state.stress_decay = 7
-                st.rerun()
-            if qs_cols[3].button("Equity Crash"):
-                st.session_state.stress_spot = -10.0
-                st.session_state.stress_vol = 10.0
-                st.rerun()
-            if qs_cols[4].button("Equity Rally"):
-                st.session_state.stress_spot = 10.0
-                st.session_state.stress_vol = -5.0
-                st.rerun()
+            quick_scen_container = st.container()
+            with quick_scen_container:
+                st.caption("Quick Scenarios")
+                qs_cols = st.columns(5)
+                if qs_cols[0].button("Spot Shock"):
+                    st.session_state.stress_spot = -10.0
+                    st.rerun()
+                if qs_cols[1].button("Vol Shock"):
+                    st.session_state.stress_vol = 10.0
+                    st.rerun()
+                if qs_cols[2].button("Week Decay"):
+                    st.session_state.stress_decay = 7
+                    st.rerun()
+                if qs_cols[3].button("Equity Crash"):
+                    st.session_state.stress_spot = -10.0
+                    st.session_state.stress_vol = 10.0
+                    st.rerun()
+                if qs_cols[4].button("Equity Rally"):
+                    st.session_state.stress_spot = 10.0
+                    st.session_state.stress_vol = -5.0
+                    st.rerun()
             
             st.divider()
 
@@ -618,13 +626,13 @@ with tabs[3]:
             if "stress_vol" not in st.session_state: st.session_state.stress_vol = 0.0
             if "stress_decay" not in st.session_state: st.session_state.stress_decay = 0
 
-            spot_change_pct = st.slider("Underlying Price Change (%)", -20.0, 20.0, key="stress_spot", step=1.0)
-            vol_change_pts = st.slider("Volatility Change (pts)", -20.0, 20.0, key="stress_vol", step=1.0)
-            time_decay_days = st.slider("Time Decay (Days)", 0, 30, key="stress_decay", step=1)
+            st.slider("Underlying Price Change (%)", -20.0, 20.0, key="stress_spot", step=1.0)
+            st.slider("Volatility Change (pts)", -20.0, 20.0, key="stress_vol", step=1.0)
+            st.slider("Time Decay (Days)", 0, 30, key="stress_decay", step=1)
             
-            spot_change = spot_change_pct / 100.0
-            vol_change = vol_change_pts / 100.0
-            time_decay = time_decay_days
+            spot_change = st.session_state.stress_spot / 100.0
+            vol_change = st.session_state.stress_vol / 100.0
+            time_decay = st.session_state.stress_decay
 
         with c_p2:
             st.subheader("Scenario Results")
@@ -641,8 +649,8 @@ with tabs[3]:
                 for idx in selected_indices:
                     strat = st.session_state.book[idx]
                     for leg in strat["legs"]:
-                        
-                        price_before += leg["position"] * leg.get("premium", 0.0)
+                        p_before = leg.get("premium", 0.0)
+                        price_before += leg["position"] * p_before
                         
                         new_spot = strat["S0"] * (1 + spot_change)
                         new_vol = max(0.01, strat["sigma"] + vol_change)
@@ -652,17 +660,18 @@ with tabs[3]:
                         price_after += leg["position"] * p_after
 
                 variation = price_after - price_before
-                st.metric("Market Value Variation", f"${variation:.2f}", help="Estimated impact of scenario on book market value")
                 
-                c_m1, c_m2 = st.columns(2)
-                with c_m1:
-                    st.write(f"**Old Price**: ${price_before:.2f}")
-                with c_m2:
-                    st.write(f"**New Price**: ${price_after:.2f}")
+                # Single-line metrics display
+                m_c1, m_c2, m_c3 = st.columns(3)
+                m_c1.metric("Total P&L", f"${variation:.2f}", help="Estimated PnL impact based on scenario (New MV - Old MV)")
+                m_c2.metric("Market Value (Abs)", f"${abs(price_after):.2f}", help="Absolute market value of selected strategies after scenario")
+                
+                prem_label = "Net Premium (CREDIT)" if price_before < 0 else "Net Premium (DEBIT)"
+                m_c3.metric(prem_label, f"${abs(price_before):.2f}", help="Initial net premium paid (+) or received (-)")
 
                 #PNL attribution
                 st.divider()
-                st.subheader("PnL Attribution (Using Taylor Approximation)")
+                st.subheader("PnL Attribution", help="Using Taylor Approximation")
                 
                 attr_totals = {"Delta": 0.0, "Gamma": 0.0, "Vega": 0.0, "Theta": 0.0}
                 
@@ -683,13 +692,12 @@ with tabs[3]:
                 pnl_explained = sum(attr_totals.values())
                 residual = variation - pnl_explained
                 
-                c_attr1, c_attr2, c_attr3, c_attr4 = st.columns(4)
+                c_attr1, c_attr2, c_attr3, c_attr4, c_attr5 = st.columns(5)
                 c_attr1.metric("Delta", f"${attr_totals['Delta']:.2f}")
                 c_attr2.metric("Gamma", f"${attr_totals['Gamma']:.2f}")
                 c_attr3.metric("Vega", f"${attr_totals['Vega']:.2f}")
                 c_attr4.metric("Theta", f"${attr_totals['Theta']:.2f}")
-                
-                st.metric("PnL Residual", f"${residual:.2f}", help="Total Variation - Sum of explained Greeks")             
+                c_attr5.metric("PnL Residual", f"${residual:.2f}", help="Total Variation - Sum of explained Greeks")
 
 
 #TAB 5: volatility smile
@@ -1315,4 +1323,4 @@ with tabs[5]:
                     st.text(traceback.format_exc())
                     st.write("Raw Data Summary:", df_surf.describe())
         else:
-             st.info("Select parameters and click Fetch Data.")
+             pass 
