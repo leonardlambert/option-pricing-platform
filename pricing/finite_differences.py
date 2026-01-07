@@ -44,9 +44,11 @@ def compute_greeks_fd(S, K, T, r, sigma, option_type, model, model_params=None):
             sigma_j = model_params.get('sigma_j', 0.2)
             return fft_pricer(k, s, t, rate, phi_merton, args=(vol, lamb, mu_j, sigma_j), call=call)
         elif model == "Heston":
-            v0 = model_params.get('v0', 0.04)
+            # Link both initial and long-term variance to the volatility parameter
+            # This represents a level shift in the volatility process
+            v0 = vol**2 
+            theta = vol**2 # Shift target variance as well for total Vega
             kappa = model_params.get('kappa', 2.0)
-            theta = model_params.get('theta', 0.04)
             xi = model_params.get('xi', 0.3)
             rho = model_params.get('rho', -0.7)
             return fft_pricer(k, s, t, rate, phi_heston, args=(v0, kappa, theta, xi, rho), call=call)
