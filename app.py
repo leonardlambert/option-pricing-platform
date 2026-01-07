@@ -9,7 +9,7 @@ import plotly.graph_objects as go
 from src.dashboard_utils import initialize_session_state, add_strategy_to_book, reset_book, delete_strategy, interpolate_volatility
 from pricing.pricing import black_scholes_price, compute_greeks, implied_volatility, calculate_pnl_attribution
 from pricing.FFT_pricer import fft_pricer
-from pricing.characteristic_functions import phi_bsm, phi_vg, phi_merton
+from pricing.characteristic_functions import phi_bsm, phi_vg, phi_merton, phi_heston
 from src.visualizer import plot_spread_analysis, plot_simulation_results, plot_efficient_frontier
 from src.simulation import simulate_gbm_paths, simulate_vg_paths, simulate_mjd_paths
 from src.market_data import get_option_aggregates, get_option_previous_close, get_stock_history_vol, get_underlying_history_range, validate_api_key, get_available_dates, get_all_preloaded_options
@@ -147,13 +147,14 @@ with tabs[0]:
         sigma = st.number_input("Volatility (σ)", value=0.2)
         option_type = st.selectbox("Type", ["C", "P"])
     with col4:
-        model = st.selectbox("Pricing Model", ["Black-Scholes-Merton", "Variance Gamma", "Merton Jump Diffusion"])
+        model = st.selectbox("Pricing Model", ["Black-Scholes-Merton", "Heston", "Variance Gamma", "Merton Jump Diffusion"])
         
         #inof about the models
         model_info = {
-            "Black-Scholes-Merton": "**Stochastic Family:** GBM | **Pricing Logic:** Closed Form",
-            "Variance Gamma": "**Stochastic Family:** Lévy Process | **Pricing Logic:** Fast Fourier Transform",
-            "Merton Jump Diffusion": "**Stochastic Family:** Jump Diffusion | **Pricing Logic:** Fast Fourier Transform"
+            "Black-Scholes-Merton": "**Process Family:** GBM (asset) | **Pricing Logic:** Closed Form",
+            "Heston": "**Process Family:** GBM (asset) + Cox-Ingersoll-Ross (volatility) | **Pricing Logic:** Fast Fourier Transform",
+            "Variance Gamma": "**Process Family:** Lévy Process (asset) | **Pricing Logic:** Fast Fourier Transform",
+            "Merton Jump Diffusion": "**Process Family:** GBM (asset) + Jump Diffusion (jumps) | **Pricing Logic:** Fast Fourier Transform"
         }
         st.caption(f"{model_info[model]}")
 
@@ -168,6 +169,13 @@ with tabs[0]:
         
         if model == "Black-Scholes-Merton":
             price = black_scholes_price(S, K, T, r, sigma, option_type)
+        elif model == "Heston":
+            #hardcoded heston params for now
+            v0, kappa, theta, xi, rho = 0.04, 2.0, 0.04, 0.3, -0.7
+            price = fft_pricer(K, S, T, r, phi_heston, args=(v0, kappa, theta, xi, rho), call=(option_type=="C"))
+            st.caption(f"Used Heston Parameters: v0 = {v0}, κ = {kappa}, θ = {theta}, ξ = {xi}, ρ = {rho}")
+            model_params = {'v0': v0, 'kappa': kappa, 'theta': theta, 'xi': xi, 'rho': rho}
+            use_fd_greeks = True
         elif model == "Variance Gamma":
             #hardcoded VGparams for now
             theta, nu = -0.1, 0.2 
@@ -186,7 +194,7 @@ with tabs[0]:
         #compute greeks
         if use_fd_greeks:
             #finite difference greeks for exotic price processes
-            model_name = "VG" if "Variance Gamma" in model else "Merton Jump Diffusion"
+            model_name = model # Use the display name directly
             greeks = compute_greeks_fd(S, K, T, r, sigma, option_type, model_name, model_params)
             delta, gamma, theta_g, vega, rho = greeks['delta'], greeks['gamma'], greeks['theta'], greeks['vega'], greeks['rho']
         else:

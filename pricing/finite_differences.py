@@ -6,7 +6,7 @@ for pricing models that don't have analytical Greek formulas.
 """
 import numpy as np
 from pricing.FFT_pricer import fft_pricer
-from pricing.characteristic_functions import phi_vg, phi_merton
+from pricing.characteristic_functions import phi_vg, phi_merton, phi_heston
 
 
 def compute_greeks_fd(S, K, T, r, sigma, option_type, model, model_params=None):
@@ -34,7 +34,7 @@ def compute_greeks_fd(S, K, T, r, sigma, option_type, model, model_params=None):
     # Define pricing function based on model
     def price_fn(s, k, t, rate, vol):
         call = (option_type == "C")
-        if model == "VG":
+        if model == "Variance Gamma":
             theta = model_params.get('theta', -0.1)
             nu = model_params.get('nu', 0.2)
             return fft_pricer(k, s, t, rate, phi_vg, args=(vol, theta, nu), call=call)
@@ -43,6 +43,13 @@ def compute_greeks_fd(S, K, T, r, sigma, option_type, model, model_params=None):
             mu_j = model_params.get('mu_j', -0.05)
             sigma_j = model_params.get('sigma_j', 0.2)
             return fft_pricer(k, s, t, rate, phi_merton, args=(vol, lamb, mu_j, sigma_j), call=call)
+        elif model == "Heston":
+            v0 = model_params.get('v0', 0.04)
+            kappa = model_params.get('kappa', 2.0)
+            theta = model_params.get('theta', 0.04)
+            xi = model_params.get('xi', 0.3)
+            rho = model_params.get('rho', -0.7)
+            return fft_pricer(k, s, t, rate, phi_heston, args=(v0, kappa, theta, xi, rho), call=call)
         else:
             raise ValueError(f"Unknown model: {model}")
     

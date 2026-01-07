@@ -20,6 +20,55 @@ def simulate_gbm_paths(S0, r, sigma, T, steps, n_paths):
     return paths
 
 @njit
+def simulate_heston_paths(
+    S0, r,
+    v0, kappa, theta, xi, rho,
+    T, steps, n_paths
+):
+    """
+    Simulate Heston stochastic volatility paths using full truncation Euler.
+    
+    dS_t = r S_t dt + sqrt(v_t) S_t dW1_t
+    dv_t = kappa (theta - v_t) dt + xi sqrt(v_t) dW2_t
+    corr(dW1, dW2) = rho
+    """
+    dt = T / steps
+    paths = np.zeros((n_paths, steps + 1))
+    vars_ = np.zeros((n_paths, steps + 1))
+
+    paths[:, 0] = S0
+    vars_[:, 0] = v0
+
+    for i in range(n_paths):
+        for t in range(1, steps + 1):
+            z1 = np.random.standard_normal()
+            z2 = np.random.standard_normal()
+
+            # Correlated Brownian motions
+            w1 = z1
+            w2 = rho * z1 + np.sqrt(1 - rho**2) * z2
+
+            v_prev = max(vars_[i, t-1], 0.0)
+
+            # Variance process (full truncation)
+            v_new = (
+                v_prev
+                + kappa * (theta - v_prev) * dt
+                + xi * np.sqrt(v_prev * dt) * w2
+            )
+            v_new = max(v_new, 0.0)
+
+            # Asset price
+            paths[i, t] = paths[i, t-1] * np.exp(
+                (r - 0.5 * v_prev) * dt
+                + np.sqrt(v_prev * dt) * w1
+            )
+
+            vars_[i, t] = v_new
+
+    return paths, vars_
+
+@njit
 def simulate_mjd_paths(S0, r, sigma, lamb, mu_j, sigma_j, T, steps, n_paths):
     """
     Simulate Merton Jump Diffusion paths.

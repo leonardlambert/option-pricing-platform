@@ -9,6 +9,42 @@ def phi_bsm(u, T, r, sigma, S0):
     var = T * sigma**2
     return np.exp(1j * u * mu - 0.5 * u**2 * var)
 
+def phi_heston(
+    u, T, r,
+    v0, kappa, theta, xi, rho,
+    S0
+):
+    """
+    Characteristic function of log(S_T) under the Heston model.
+    """
+    iu = 1j * u
+
+    a = kappa * theta
+    b = kappa
+    sigma = xi
+
+    d = np.sqrt((rho * sigma * iu - b)**2 + sigma**2 * (iu + u**2))
+    g = (b - rho * sigma * iu - d) / (b - rho * sigma * iu + d)
+
+    exp_dt = np.exp(-d * T)
+
+    C = (
+        r * iu * T
+        + (a / sigma**2) * (
+            (b - rho * sigma * iu - d) * T
+            - 2.0 * np.log((1 - g * exp_dt) / (1 - g))
+        )
+    )
+
+    D = (
+        (b - rho * sigma * iu - d) / sigma**2
+        * ((1 - exp_dt) / (1 - g * exp_dt))
+    )
+
+    return np.exp(
+        C + D * v0 + iu * np.log(S0)
+    )
+
 def phi_vg(u, T, r, sigma, theta, nu, S0):
     """
     Characteristic function for Variance Gamma.
@@ -38,3 +74,5 @@ def phi_merton(u, T, r, sigma, lamb, mu_j, sigma_j, S0):
     jump_part = lamb * T * (np.exp(1j * u * mu_j - 0.5 * sigma_j**2 * u**2) - 1)
     
     return np.exp(term1 + term2 + jump_part)
+
+
