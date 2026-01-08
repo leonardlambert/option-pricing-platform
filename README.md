@@ -25,15 +25,18 @@ It emphasizes robustness, numerical stability, and realistic market constraints 
   - Monte Carlo Simulation using saved strategies, with adaptables path number / steps / horizon
   - Risk Metrics : Value at Risk (VaR), Conditional Value at Risk (CVaR)
 
+  ![alt text](./src/images/tab3.png 'PnL Distribution using Monte Carlo Simulation')
+
 - **Strategy Stress Testing**
   - Assessment of Spot / Volatility / Time Decay impact on PnL using Taylor approximation
   - Quick Scenario Analysis, PNL residual check
+
+  ![alt text](./src/images/tab5.png 'Book Stress Testing')
 
 - **Volatility smile**
   - Construction using a preloaded dataset or live API data
   - Use of 5 strikes : one central, two OTM, two ITM
 
-  ![alt text](./src/images/tab4.png 'Volatility smile construction using dataset or live API data')
 
 - **Volatility surface**
   - Plotting using a preloaded dataset or live API data
