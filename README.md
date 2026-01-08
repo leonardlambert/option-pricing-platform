@@ -13,13 +13,13 @@ It emphasizes robustness, numerical stability, and realistic market constraints 
   - Pricing using standard Black–Scholes-Merton, and exotic Variance Gamma / Merton Jump Diffusion models
   - Greeks calculation using closed-form expressions and finite differences
 
-  ![alt text](https://github.com/leonardlambert/market-risk-pricing-platform/raw/master/images/tab1.png 'Single Option Pricing & Greeks by finite differences')
+  ![alt text](https://github.com/leonardlambert/option-pricing-platform/raw/master/src/images/tab1.png 'Single Option Pricing & Greeks by finite differences')
 
 - **Strategy builder and Spread visualization**
   - Payoff at maturity & current value graph  
   - Multi-option strategy building and saving in an option book JSON file
 
-  ![alt text](https://github.com/leonardlambert/market-risk-pricing-platform/raw/master/images/tab2.png 'Spread building and visualization')
+  ![alt text](https://github.com/leonardlambert/option-pricing-platform/raw/master/src/images/tab2.png 'Spread building and visualization')
 
 - **PnL Distribution**
   - Monte Carlo Simulation using saved strategies, with adaptables path number / steps / horizon
@@ -33,7 +33,7 @@ It emphasizes robustness, numerical stability, and realistic market constraints 
   - Construction using a preloaded dataset or live API data
   - Use of 5 strikes : one central, two OTM, two ITM
 
-  ![alt text](https://github.com/leonardlambert/market-risk-pricing-platform/raw/master/images/tab4.png 'Volatility smile construction using dataset or live API data')
+  ![alt text](https://github.com/leonardlambert/option-pricing-platform/raw/master/src/images/tab4.png 'Volatility smile construction using dataset or live API data')
 
 - **Volatility surface**
   - Plotting using a preloaded dataset or live API data
