@@ -31,7 +31,7 @@ It emphasizes robustness, numerical stability, and realistic market constraints 
   - Assessment of Spot / Volatility / Time Decay impact on PnL using Taylor approximation
   - Quick Scenario Analysis, PNL residual check
 
-  ![alt text](./src/images/tab5.png 'Book Stress Testing')
+  ![alt text](./src/images/tab4.png 'Book Stress Testing')
 
 - **Volatility smile**
   - Construction using a preloaded dataset or live API data
