@@ -95,7 +95,7 @@ with st.sidebar:
                 del st.session_state["user_api_key"]
                 st.rerun()
         else:
-            st.warning("⚠️ No API Key Applied. Live data fetch will fail.")
+            st.warning("No API Key Applied. Live data fetch will fail.")
             st.caption("Please enter a valid Massive API key to use Live mode.")
     else:
         st.info("Currently using: **Preloaded Dataset**")
@@ -368,7 +368,7 @@ with tabs[2]:
             params = f"S0={strat['S0']}, T={strat['T']}, r={strat['r']}, σ={strat['sigma']}"
             sid = strat["id"]
             
-            with st.expander(f"📍 **{name}** | 🕒 {timestamp}"):
+            with st.expander(f"**{name}** | {timestamp}"):
                 c_sel, c_details, c_action = st.columns([0.5, 3.5, 1])
                 with c_sel:
                     current_sel = st.checkbox("Select Strategy", value=st.session_state.pnl_selected_strategies.get(sid, True), key=f"pnl_sel_{idx}_{sid}", label_visibility="collapsed")
@@ -407,7 +407,7 @@ with tabs[2]:
                 del st.session_state["pnl_results"]
             st.rerun()
 
-        if st.button("⚠️ Clear Entire Book"):
+        if st.button("Clear Entire Book"):
             reset_book()
             st.session_state.pnl_selected_strategies = {}
             if "pnl_results" in st.session_state:
@@ -432,7 +432,7 @@ with tabs[2]:
                 # Check for stale results (simple persistence)
                 if "pnl_results" in st.session_state and st.session_state.get("pnl_last_n_paths") != n_paths:
                     del st.session_state["pnl_results"]
-                    st.info("⚠️ Paths changed. Click 'Run Monte Carlo' to refresh.")
+                    st.info("Paths changed. Click 'Run Monte Carlo' to refresh.")
                 
                 st.session_state.pnl_last_n_paths = n_paths
                     
@@ -502,7 +502,7 @@ with tabs[2]:
                             "abs_initial_value": abs_initial_value,
                             "use_percentage": abs_initial_value > 0.01
                         }
-                        st.toast(f"✅ Simulation complete! ({n_paths:,} paths)")
+                        st.toast(f"Simulation complete! ({n_paths:,} paths)")
                         st.rerun()
 
                 # Results Anchor Container
@@ -517,11 +517,11 @@ with tabs[2]:
                     
                     # Display initial investment info
                     if init_val > 0:
-                        st.info(f"📊 Initial Investment: ${abs_init:.2f} (Debit - you paid)")
+                        st.info(f"Initial Investment: ${abs_init:.2f} (Debit - you paid)")
                     elif init_val < 0:
-                        st.info(f"📊 Initial Investment: ${abs_init:.2f} (Credit - you received)")
+                        st.info(f"Initial Investment: ${abs_init:.2f} (Credit - you received)")
                     else:
-                        st.info(f"📊 Initial Investment: ~$0 (Balanced position)")
+                        st.info(f"Initial Investment: ~$0 (Balanced position)")
                     
                     mean_pnl = np.mean(results['pnl'])
                     variation_pct = (mean_pnl / abs_init) * 100 if abs_init > 0.01 else 0.0
@@ -573,7 +573,7 @@ with tabs[3]:
             name = strat.get("name", "Untitled")
             timestamp = strat.get("timestamp", "N/A")
             sid = strat["id"]
-            with st.expander(f"📍 **{name}** | 🕒 {timestamp}"):
+            with st.expander(f"**{name}** | {timestamp}"):
                 c_sel_st, c_details_st = st.columns([0.5, 4.5])
                 with c_sel_st:
                     current_sel_st = st.checkbox("Select Strategy", value=st.session_state.stress_selected_strategies.get(sid, True), key=f"stress_sel_{idx}_{sid}", label_visibility="collapsed")
