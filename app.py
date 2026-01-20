@@ -147,14 +147,13 @@ with tabs[0]:
         sigma = st.number_input("Volatility (σ)", value=0.2)
         option_type = st.selectbox("Type", ["C", "P"])
     with col4:
-        model = st.selectbox("Pricing Model", ["Black-Scholes-Merton", "Heston", "Variance Gamma", "Merton Jump Diffusion"])
+        model = st.selectbox("Pricing Model", ["Black-Scholes-Merton", "Variance Gamma", "Merton Jump Diffusion"])
         
         #inof about the models
         model_info = {
-            "Black-Scholes-Merton": "**Process Family:** GBM (asset) | **Pricing Logic:** Closed Form",
-            "Heston": "**Process Family:** GBM (asset) + Cox-Ingersoll-Ross (volatility) | **Pricing Logic:** Fast Fourier Transform",
-            "Variance Gamma": "**Process Family:** Lévy Process (asset) | **Pricing Logic:** Fast Fourier Transform",
-            "Merton Jump Diffusion": "**Process Family:** GBM (asset) + Jump Diffusion (jumps) | **Pricing Logic:** Fast Fourier Transform"
+            "Black-Scholes-Merton": "**Process Family:** Diffusion (GBM) | **Pricing Logic:** Closed Form | **Use case:** Baseline pricing and risk attribution",
+            "Variance Gamma": "**Process Family:** Lévy Process | **Pricing Logic:** Fourier Inversion (via FFT) | **Use case:** Modeling skewness + kurtosis in short-dated options markets",
+            "Merton Jump Diffusion": "**Process Family:** Diffusion + Poisson Jumps | **Pricing Logic:** Fourier Inversion (via FFT) | **Use case:** Capturing discrete jump risks around corporate actions"
         }
         st.caption(f"{model_info[model]}")
 
@@ -169,13 +168,13 @@ with tabs[0]:
         
         if model == "Black-Scholes-Merton":
             price = black_scholes_price(S, K, T, r, sigma, option_type)
-        elif model == "Heston":
+        #elif model == "Heston":
             #hardcoded heston params for now
-            v0, kappa, theta, xi, rho = 0.04, 2.0, 0.04, 0.3, -0.7
-            price = fft_pricer(K, S, T, r, phi_heston, args=(v0, kappa, theta, xi, rho), call=(option_type=="C"))
-            st.caption(f"Used Heston Parameters: v0 = {v0}, κ = {kappa}, θ = {theta}, ξ = {xi}, ρ = {rho}")
-            model_params = {'v0': v0, 'kappa': kappa, 'theta': theta, 'xi': xi, 'rho': rho}
-            use_fd_greeks = True
+            #v0, kappa, theta, xi, rho = 0.04, 2.0, 0.04, 0.3, -0.7
+            #price = fft_pricer(K, S, T, r, phi_heston, args=(v0, kappa, theta, xi, rho), call=(option_type=="C"))
+            #st.caption(f"Used Heston Parameters: v0 = {v0}, κ = {kappa}, θ = {theta}, ξ = {xi}, ρ = {rho}")
+            #model_params = {'v0': v0, 'kappa': kappa, 'theta': theta, 'xi': xi, 'rho': rho}
+            #use_fd_greeks = True
         elif model == "Variance Gamma":
             #hardcoded VGparams for now
             theta, nu = -0.1, 0.2 
