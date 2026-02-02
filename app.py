@@ -118,6 +118,7 @@ tabs = st.tabs(["Option Pricing & Greeks", "Strategy Builder", "Strategy PnL Dis
 
 #TAB 1 : single option pricing
 with tabs[0]:
+    st.markdown("***Use cases***: Implements end-to-end option valuation using both closed-form and numerical pricing methods. Mirrors how trading and valuation teams benchmark prices across models and assess model risk. Directly applicable to pricing validation, trade booking checks and P&L explain.")
     
     col1, col2, col3, col4 = st.columns(4)
     with col1:
@@ -201,6 +202,7 @@ with tabs[0]:
 
 #TAB 2 : strategy builder
 with tabs[1]:
+    st.markdown("***Use cases***: Replicates the construction and management of multi-leg option strategies as used by trading and structuring desks. Demonstrates book-level organization via JSON persistence, enabling reproducible analysis and auditability. Reflects real workflows for tracking strategy composition, exposure and lifecycle.")
     
     col_setup, col_plot = st.columns([1, 4])
     
@@ -327,6 +329,7 @@ with tabs[1]:
 
 #TAB 3 : strategy PnL distribution
 with tabs[2]:
+    st.markdown("***Use cases***: Uses Monte Carlo simulations to model non-linear P&L distributions for option strategies. Illustrates how desks assess tail risk, asymmetry and scenario dispersion beyond point estimates. Directly relevant for risk management, strategy validation and client suitability analysis.")
     
     if not st.session_state.book:
         st.warning("Book is empty. Add strategies in 'Strategy Builder' tab first.")
@@ -541,6 +544,7 @@ with tabs[2]:
 
 #TAB 4: strategy stress testing
 with tabs[3]:
+    st.markdown("***Use cases***: Implements stress testing through structured P&L decomposition and fast scenario analysis. Mirrors risk desk practices to isolate drivers (delta, volatility, convexity) under adverse market moves. Applicable to intraday risk monitoring and regulatory stress frameworks.")
     if not st.session_state.book:
         st.warning("Book is empty. Add strategies in 'Strategy Builder' tab first.")
     else:
@@ -698,8 +702,7 @@ with tabs[3]:
 
 #TAB 5: volatility smile
 with tabs[4]:
-    
-    analysis_date = None
+    st.markdown("***Use cases***: Reconstructs implied volatility smiles from market data, highlighting skew and wing dynamics. Demonstrates understanding of how market structure and supply-demand shape option pricing inputs. Directly used by trading, structuring and model validation teams.")
 
     col_input, col_view = st.columns([1, 4])
     
@@ -895,6 +898,10 @@ with tabs[4]:
                     st.session_state["smile_data"] = pd.DataFrame(smile_rows).sort_values("Strike")
                     st.success("Smile Generated!")
 
+        st.divider()
+        with st.expander("Model & Data Details"):
+             st.markdown("This module fetches option chains across multiple strikes for a single expiration. It calculates the Implied Volatility for each strike using a numerical inversion of the Black-Scholes formula (Newton-Raphson), constructing the volatility smile that traders uses to quote prices.")
+
     with col_view:
         if st.session_state.get("market_mode") == "Previous Day" and "center_data" in st.session_state:
             center = st.session_state["center_data"]
@@ -1015,6 +1022,7 @@ with tabs[4]:
 
 #TAB 6: volatility surface
 with tabs[5]:
+    st.markdown("***Use cases***: Extends smile analysis across maturities to build a full implied volatility surface. Reflects standard desk tooling for term-structure analysis and model calibration inputs. Relevant for volatility trading, risk aggregation and model consistency checks.")
     
     col_s_input, col_s_view = st.columns([1, 4])
     
@@ -1202,7 +1210,11 @@ with tabs[5]:
              st.divider()
              if st.button("Generate Volatility Surface", key="surf_gen"):
                  st.session_state["surface_data"] = st.session_state["custom_data_table"]
-                 
+
+        st.divider()
+        with st.expander("Model & Data Details"):
+             st.markdown("This tool aggregates historical option data over a user-defined date range to form a dense grid of [Moneyness, Time-to-Maturity, Implied Volatility]. It uses cubic interpolation (or linear fallback) to construct a continuous volatility surface from discrete market observations.")
+
     with col_s_view:
         if st.session_state.get("market_mode") == "Custom Timeframe":
             
@@ -1319,8 +1331,7 @@ with tabs[5]:
 
 #TAB 7: Model Calibration (Heston)
 with tabs[6]:
-    st.header("Heston Model Calibration")
-    st.markdown("The calibrator uses the **2025-12-17** close prices of **AAPL, NVDA and SPY Call Options**, with expiration **2026-02-20**. It uses the HestonCalibrator class which is based on the paper ***Full and fast calibration of the Heston stochastic volatility model*** by  Cui, del Baño Rollin & Germano")
+    st.markdown("***Use cases***: Implements a calibration workflow based on Cui (2017), focusing on speed and stability. Demonstrates practical model calibration under real data constraints, including convergence and robustness trade-offs. Mirrors how stochastic volatility models are calibrated and validated in trading and risk environments.")
     
     col_c1, col_c2 = st.columns([1, 4]) # Tighter left column
     
@@ -1417,6 +1428,16 @@ with tabs[6]:
                     st.error(f"Calibration Failed: {str(e)}")
                     import traceback
                     st.text(traceback.format_exc())
+
+        st.divider()
+        with st.expander("Model & Data Details"):
+            st.markdown("""
+            The calibrator uses the **2025-12-17** close prices of **AAPL, NVDA and SPY Call Options**, with expiration **2026-02-20**. 
+            
+            It uses the **HestonCalibrator** class which is based on the paper:
+            ***Full and fast calibration of the Heston stochastic volatility model***  
+            *by Cui, del Baño Rollin & Germano*
+            """)
 
     with col_c2:
         st.subheader("2. Calibration Results")
