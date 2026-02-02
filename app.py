@@ -14,6 +14,9 @@ from src.visualizer import plot_spread_analysis, plot_simulation_results, plot_e
 from src.simulation import simulate_gbm_paths, simulate_vg_paths, simulate_mjd_paths
 from src.market_data import get_option_aggregates, get_option_previous_close, get_stock_history_vol, get_underlying_history_range, validate_api_key, get_available_dates, get_all_preloaded_options
 from pricing.finite_differences import compute_greeks_fd
+from pricing.heston_calibration import HestonCalibrator
+from src.diagnostics import calculate_metrics, check_parameter_stability
+from src.visualizer import plot_heston_calibration
 
 #config
 st.set_page_config(page_title="Option Pricing & Risk Management", layout="wide", page_icon="📈", initial_sidebar_state="collapsed")
@@ -22,29 +25,35 @@ initialize_session_state()
 #style
 st.markdown("""
     <style>
-        /* Serious Font Import (Inter) */
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
-        
-        html, body, [class*="css"]  {
-            font-family: 'Inter', 'Segoe UI', 'Roboto', sans-serif;
+        /* Arial / Sans Serif Font */
+        html, body, [class*="css"], .stMarkdown, .stText, h1, h2, h3, h4, h5, h6, label, .stMetric {
+            font-family: 'Arial', sans-serif !important;
         }
 
         .block-container {
-            padding-top: 3rem; /* Moderate spacing */
+            padding-top: 3rem; 
             padding-bottom: 0rem;
         }
         h1 {
-            font-family: 'Inter', 'Segoe UI', sans-serif;
             font-weight: 600;
-            font-size: 1.5rem !important; /* Smaller, serious title */
+            font-size: 1.5rem !important;
             margin-top: 0rem !important;
             margin-bottom: 0rem !important;
             padding-bottom: 0rem !important;
         }
         
-        /* Increase space between title and tabs slightly */
         .stTabs {
             margin-top: 1rem;
+        }
+        
+        div[data-testid="stTabs"] [data-baseweb="tab-list"] {
+            display: flex;
+            width: 100%;
+        }
+        
+        div[data-testid="stTabs"] [data-baseweb="tab-list"] button {
+            flex: 1;
+            text-align: center;
         }
     </style>
 """, unsafe_allow_html=True)
@@ -101,37 +110,11 @@ with st.sidebar:
         st.info("Currently using: **Preloaded Dataset**")
         st.caption("No API key required in this mode.")
 
-#apply light theme css
-st.markdown("""
-    <style>
-        .stApp {
-            background-color: white;
-            color: black;
-        }
-        [data-testid="stHeader"] {
-            background-color: white;
-        }
-        [data-testid="stSidebar"] {
-            background-color: #f8f9fa;
-        }
-        .stMarkdown, .stText, h1, h2, h3, h4, h5, h6, label, .stMetric {
-            color: black !important;
-        }
-        /* Metric labels specifically */
-        [data-testid="stMetricLabel"] {
-            color: #262730 !important;
-        }
-        .stButton>button {
-            color: black;
-            border-color: #ccc;
-        }
-    </style>
-""", unsafe_allow_html=True)
 
 st.title("Option Pricing & Scenario Analysis Platform")
 
 #sections list
-tabs = st.tabs(["Option Pricing & Greeks", "Strategy Builder", "Strategy PnL Distribution", "Stress Testing", "Volatility Smile", "Volatility Surface"])
+tabs = st.tabs(["Option Pricing & Greeks", "Strategy Builder", "Strategy PnL Distribution", "Stress Testing", "Volatility Smile", "Volatility Surface", "Heston Model Calibration"])
 
 #TAB 1 : single option pricing
 with tabs[0]:
@@ -219,7 +202,7 @@ with tabs[0]:
 #TAB 2 : strategy builder
 with tabs[1]:
     
-    col_setup, col_plot = st.columns([1, 2])
+    col_setup, col_plot = st.columns([1, 4])
     
     with col_setup:
         st.subheader("Market Parameters")
@@ -257,7 +240,7 @@ with tabs[1]:
             add_strategy_to_book(S0_spread, T_spread, r_spread, sigma_spread, save_legs, name=strat_name)
             st.toast(f"Strategy '{strat_name}' saved!")
         
-
+        st.divider()
     with col_plot:
         
         S_range = np.linspace(S0_spread * 0.5, S0_spread * 1.5, 50) #linspace for FFT computation
@@ -339,6 +322,8 @@ with tabs[1]:
 
         with st.expander("View Greeks"):
             st.plotly_chart(fig2, key="spread_plot_2", width='stretch')
+            st.divider()
+
 
 #TAB 3 : strategy PnL distribution
 with tabs[2]:
@@ -408,7 +393,7 @@ with tabs[2]:
                 del st.session_state["pnl_results"]
             st.rerun()
 
-        if st.button("⚠️ Clear Entire Book"):
+        if st.button("Clear Entire Book"):
             reset_book()
             st.session_state.pnl_selected_strategies = {}
             if "pnl_results" in st.session_state:
@@ -552,6 +537,8 @@ with tabs[2]:
                         else:
                             st.metric("CVaR (95%)", f"${cvar_95:.2f}")
 
+                st.divider()
+
 #TAB 4: strategy stress testing
 with tabs[3]:
     if not st.session_state.book:
@@ -602,7 +589,7 @@ with tabs[3]:
 
         st.divider()
         
-        c_p1, c_p2 = st.columns([1, 2])
+        c_p1, c_p2 = st.columns([1, 4])
         with c_p1:
             st.subheader("Scenario Parameters")
             quick_scen_container = st.container()
@@ -641,6 +628,8 @@ with tabs[3]:
             spot_change = st.session_state.stress_spot / 100.0
             vol_change = st.session_state.stress_vol / 100.0
             time_decay = st.session_state.stress_decay
+
+        st.divider()
 
         with c_p2:
             st.subheader("Scenario Results")
@@ -707,13 +696,12 @@ with tabs[3]:
                 c_attr4.metric("Theta", f"${attr_totals['Theta']:.2f}")
                 c_attr5.metric("PnL Residual", f"${residual:.2f}", help="Total Variation - Sum of explained Greeks")
 
-
 #TAB 5: volatility smile
 with tabs[4]:
     
     analysis_date = None
 
-    col_input, col_view = st.columns([1, 2])
+    col_input, col_view = st.columns([1, 4])
     
     with col_input:
 
@@ -723,20 +711,13 @@ with tabs[4]:
 
             from src.market_data import get_available_dates
             
-            temp_op_type = st.session_state.get("smile_op_type", "C")
-            available_dates = get_available_dates(ticker, temp_op_type)
-            
-            if available_dates:
-                analysis_date = st.date_input(
-                    "Analysis Date",
-                    value=available_dates[-1],
-                    min_value=available_dates[0],
-                    max_value=available_dates[-1],
-                    key="smile_analysis_date"
-                )
-            else:
-                analysis_date = st.date_input("Analysis Date", disabled=True, key="smile_analysis_date_disabled")
-                st.error(f"No concurrent data for {ticker} {temp_op_type} in preloaded CSVs.")
+            # Locked analysis date to 2025-12-17
+            analysis_date = st.date_input(
+                "Analysis Date",
+                value=datetime(2025, 12, 17).date(),
+                key="smile_analysis_date",
+                disabled=True
+            )
 
             c_exp1, c_exp2 = st.columns(2)
             #lcok expiration at 2026/02/20
@@ -759,18 +740,17 @@ with tabs[4]:
                         S_real, hv_real, err_s = get_stock_history_vol(ticker, ref_date_str)
                         df_opt_bar, err_o = get_option_aggregates(ticker, exp_date, op_type, strike, ref_date_str, ref_date_str)
                         
-                        if not df_opt_bar.empty and S_real:
-                            row_i = df_opt_bar.iloc[0]
-                            st.session_state["underlying_S"] = S_real
-                            st.session_state["underlying_HV"] = hv_real
-                            st.session_state["market_mode"] = "Previous Day"
-                                                      
-                            time_to_exp = (pd.to_datetime(exp_date).date() - analysis_date).days / 365.0
-                            st.session_state["center_data"] = {
-                                "Strike": strike, "Date": row_i["Date"], "Open": row_i["Open"], "High": row_i["High"],
-                                "Low": row_i["Low"], "Close": row_i["Close"], "Volume": row_i["Volume"],
-                                "IV": row_i.get("Implied Volatility"), "IV_Error": None, "TimeToExp": time_to_exp
-                            }
+                        if S_real:
+                            if not df_opt_bar.empty:
+                                row_i = df_opt_bar.iloc[0]
+                                time_to_exp = (pd.to_datetime(exp_date).date() - analysis_date).days / 365.0
+                                st.session_state["center_data"] = {
+                                    "Strike": strike, "Date": row_i["Date"], "Open": row_i["Open"], "High": row_i["High"],
+                                    "Low": row_i["Low"], "Close": row_i["Close"], "Volume": row_i["Volume"],
+                                    "IV": row_i.get("Implied Volatility"), "IV_Error": None, "TimeToExp": time_to_exp
+                                }
+                            else:
+                                st.session_state.pop("center_data", None)
 
                             from src.market_data import load_preloaded_options
                             df_all = load_preloaded_options()
@@ -791,15 +771,16 @@ with tabs[4]:
                                 st.session_state["smile_data"] = pd.DataFrame(smile_rows)
                                 st.success(f"Data and Smile updated for {ref_date_str}!")
                             else:
-                                st.session_state.pop("smile_data", None)
-                                st.warning("Metrics updated, but no strikes found for smile.")
+                                 st.session_state.pop("smile_data", None)
+                                 st.warning("Metrics updated, but no strikes found for smile.")
+                            
+                            st.session_state["underlying_S"] = S_real
+                            st.session_state["underlying_HV"] = hv_real
+                            st.session_state["market_mode"] = "Previous Day"
                         else:
-                            st.warning(f"No concurrent data found for {ticker} on {ref_date_str}")
+                            st.warning(f"No underlying data found for {ticker} on {ref_date_str}")
                 else:
                     st.error("Please select a valid analysis date.")
-
-            if not available_dates:
-                st.error(f"No concurrent data for {ticker} {temp_op_type} in preloaded CSVs.")
 
 
         else:
@@ -811,7 +792,7 @@ with tabs[4]:
             
             strike = st.number_input("Central Strike", value=275.0, step=1.0, key="smile_strike")
 
-        st.divider()
+        
         
         if st.session_state.get("data_mode") == "Live API":
             st.subheader("Data Fetching")
@@ -918,51 +899,7 @@ with tabs[4]:
         if st.session_state.get("market_mode") == "Previous Day" and "center_data" in st.session_state:
             center = st.session_state["center_data"]
             
-            #OHLCV data
-            st.markdown("### 1. Option OHLCV Data")
-            texp = center.get("TimeToExp", 0.0)
-            date_str = center['Date'].strftime('%Y-%m-%d')
-            st.caption(f"Date: {date_str} | Time to Exp: {texp:.4f}y")
-            
-            ohlc_cols = st.columns(5)
-            ohlc_cols[0].metric("Open", f"${center['Open']:.2f}")
-            ohlc_cols[1].metric("High", f"${center['High']:.2f}")
-            ohlc_cols[2].metric("Low", f"${center['Low']:.2f}")
-            ohlc_cols[3].metric("Close", f"${center['Close']:.2f}")
-            ohlc_cols[4].metric("Volume", f"{center['Volume']:,}")
-            
-            #Underlying data
-            st.markdown("### 2. Underlying Asset")
-            if "underlying_S" in st.session_state:
-                udata = st.columns(2)
-                udata[0].metric("Underlying Price", f"${st.session_state.get('underlying_S', 0):.2f}")
-
-                curr_hv = st.session_state.get('underlying_HV', 0)
-                if st.session_state.get("data_mode") == "Preloaded Dataset":
-
-                    t_curr = st.session_state.get("smile_ticker", "AAPL")
-                    if f"constant_hv_{t_curr}" not in st.session_state:
-                        from src.market_data import get_stock_history_vol
-                        _, hv_const, _ = get_stock_history_vol(t_curr, "2025-12-17") # Dataset max date
-                        st.session_state[f"constant_hv_{t_curr}"] = hv_const
-                    
-                    curr_hv = st.session_state.get(f"constant_hv_{t_curr}", curr_hv)
-
-                udata[1].metric(
-                    "Historical Volatility (1Y)", 
-                    f"{curr_hv*100:.2f}%",
-                    help="The value displayed here is the historical volatility of the underlying asset for the last year - It is hypothesized to be constant - This is a model simplification for ease of use"
-                )
-            else:
-                 st.warning("Underlying Data Not Available")
-            
-            #IV part
-            st.markdown("### 3. Implied Volatility")
-            if center.get('IV_Error'):
-                st.error(f"IV Calculation Failed: {center['IV_Error']}")
-            else:
-                st.metric("Implied Volatility", f"{center['IV']:.2%}" if center['IV'] else "N/A")
-
+            # 1. Volatility Smile Plot (Now at the top)
             if "smile_data" in st.session_state:
                 df_smile = st.session_state["smile_data"]
                 
@@ -1024,14 +961,62 @@ with tabs[4]:
             else:
                 if st.session_state.get("data_mode") == "Live API":
                     st.info("Click 'Generate Volatility Smile' to fetch neighbor strikes.")
+
+            st.divider()
+
+            # 2. Option OHLCV Data
+            st.markdown("### 1. Option OHLCV Data")
+            texp = center.get("TimeToExp", 0.0)
+            date_str = center['Date'].strftime('%Y-%m-%d')
+            st.caption(f"Date: {date_str} | Time to Exp: {texp:.4f}y")
+            
+            ohlc_cols = st.columns(5)
+            ohlc_cols[0].metric("Open", f"${center['Open']:.2f}")
+            ohlc_cols[1].metric("High", f"${center['High']:.2f}")
+            ohlc_cols[2].metric("Low", f"${center['Low']:.2f}")
+            ohlc_cols[3].metric("Close", f"${center['Close']:.2f}")
+            ohlc_cols[4].metric("Volume", f"{center['Volume']:,}")
+            
+            # 3. Underlying Asset
+            st.markdown("### 2. Underlying Asset")
+            if "underlying_S" in st.session_state:
+                udata = st.columns(2)
+                udata[0].metric("Underlying Price", f"${st.session_state.get('underlying_S', 0):.2f}")
+
+                curr_hv = st.session_state.get('underlying_HV', 0)
+                if st.session_state.get("data_mode") == "Preloaded Dataset":
+
+                    t_curr = st.session_state.get("smile_ticker", "AAPL")
+                    if f"constant_hv_{t_curr}" not in st.session_state:
+                        from src.market_data import get_stock_history_vol
+                        _, hv_const, _ = get_stock_history_vol(t_curr, "2025-12-17") # Dataset max date
+                        st.session_state[f"constant_hv_{t_curr}"] = hv_const
+                    
+                    curr_hv = st.session_state.get(f"constant_hv_{t_curr}", curr_hv)
+
+                udata[1].metric(
+                    "Historical Volatility (1Y)", 
+                    f"{curr_hv*100:.2f}%",
+                    help="The value displayed here is the historical volatility of the underlying asset for the last year - It is hypothesized to be constant - This is a model simplification for ease of use"
+                )
+            else:
+                 st.warning("Underlying Data Not Available")
+            
+            # 4. Implied Volatility (Center)
+            st.markdown("### 3. Implied Volatility")
+            if center.get('IV_Error'):
+                st.error(f"IV Calculation Failed: {center['IV_Error']}")
+            else:
+                st.metric("Implied Volatility", f"{center['IV']:.2%}" if center['IV'] else "N/A")
         else:
              if st.session_state.get("data_mode") == "Live API":
                 st.info("Select parameters and click Fetch Data.")
 
+
 #TAB 6: volatility surface
 with tabs[5]:
     
-    col_s_input, col_s_view = st.columns([1, 2])
+    col_s_input, col_s_view = st.columns([1, 4])
     
     with col_s_input:
         
@@ -1163,6 +1148,9 @@ with tabs[5]:
                 if "surface_data" in st.session_state: del st.session_state["surface_data"]
                 if "custom_data_table" in st.session_state: del st.session_state["custom_data_table"]
 
+                if "surface_data" in st.session_state:
+                    st.info(f"Surface generated using {len(st.session_state['surface_data'])} data points.")
+
                 with st.spinner("Processing offline dataset..."):
                     u_data, u_err = get_underlying_history_range(
                         ticker, 
@@ -1218,38 +1206,10 @@ with tabs[5]:
     with col_s_view:
         if st.session_state.get("market_mode") == "Custom Timeframe":
             
-            if "custom_data_table" in st.session_state:
-                df_all = st.session_state["custom_data_table"]
-                
-                center_val = strike
-                df_table = df_all[df_all["Strike"] == center_val].sort_values("Date")
-                
-                if df_table.empty:
-                    st.info(f"No data for central strike {center_val}, showing all.")
-                    df_table = df_all.head(50)
-                
-                d_min = df_all["Date"].min().strftime("%Y-%m-%d")
-                d_max = df_all["Date"].max().strftime("%Y-%m-%d")
-                
-                st.subheader(f"Historical Data ({d_min} to {d_max})")
-                st.caption(f"Showing data for Center Strike: {center_val}")
-                st.dataframe(
-                    df_table[["Date", "Underlying", "OptionPrice", "Moneyness", "IV"]].style.format({
-                        "Underlying": "{:.2f}",
-                        "OptionPrice": "{:.2f}",
-                        "Moneyness": "{:.4f}",
-                        "IV": "{:.2%}"
-                    }), 
-                    width="stretch",
-                    hide_index=True
-                )
-            
             if "surface_data" in st.session_state:
                 df_surf = st.session_state["surface_data"]
                 
-                st.divider()
                 st.subheader("Implied Volatility Surface")
-                st.info(f"Surface generated using {len(df_surf)} data points.")
                 
                 try:
                     df_clean = df_surf.copy()
@@ -1330,5 +1290,213 @@ with tabs[5]:
                     import traceback
                     st.text(traceback.format_exc())
                     st.write("Raw Data Summary:", df_surf.describe())
+
+            if "custom_data_table" in st.session_state:
+                df_all = st.session_state["custom_data_table"]
+                
+                center_val = strike
+                df_table = df_all[df_all["Strike"] == center_val].sort_values("Date")
+                
+                if df_table.empty:
+                    st.info(f"No data for central strike {center_val}, showing all.")
+                    df_table = df_all.head(50)
+                
+                d_min = df_all["Date"].min().strftime("%Y-%m-%d")
+                d_max = df_all["Date"].max().strftime("%Y-%m-%d")
+                
+                st.subheader(f"Historical Data ({d_min} to {d_max})")
+                st.caption(f"Showing data for Center Strike: {center_val}")
+                st.dataframe(
+                    df_table[["Date", "Underlying", "OptionPrice", "Moneyness", "IV"]].style.format({
+                        "Underlying": "{:.2f}",
+                        "OptionPrice": "{:.2f}",
+                        "Moneyness": "{:.4f}",
+                        "IV": "{:.2%}"
+                    }), 
+                    width="stretch",
+                    hide_index=True
+                )
+
+#TAB 7: Model Calibration (Heston)
+with tabs[6]:
+    st.header("Heston Model Calibration")
+    st.markdown("The calibrator uses the **2025-12-17** close prices of **AAPL, NVDA and SPY Call Options**, with expiration **2026-02-20**. It uses the HestonCalibrator class which is based on the paper ***Full and fast calibration of the Heston stochastic volatility model*** by  Cui, del Baño Rollin & Germano")
+    
+    col_c1, col_c2 = st.columns([1, 4]) # Tighter left column
+    
+    with col_c1:
+        st.subheader("1. Configuration")
+        
+        # User only selects Ticker
+        calib_ticker = st.selectbox("Ticker", ["AAPL", "NVDA", "SPY"], key="calib_ticker").upper()
+        
+        # Fixed Parameters Display
+        st.caption("Fixed Parameters")
+        st.text_input("Market Date", value="2025-12-17", disabled=True, key="calib_date_disp")
+        st.text_input("Expiration", value="2026-02-20", disabled=True, key="calib_exp_disp")
+        
+        # Internal Fixed Parameters
+        calib_date = datetime(2025, 12, 17).date()
+        calib_exp = datetime(2026, 2, 20).date()
+        calib_type = "C" # Call Only
+
+        if st.button("Run Calibration", key="run_heston_calib"):
+            with st.spinner("Fetching smile for 2025-12-17..."):
+                try:
+                    from src.market_data import load_preloaded_options, get_stock_history_vol
+                    from pricing.heston_calibration import HestonCalibrator
+                    
+                    # 1. Load & Filter Data
+                    df_all = load_preloaded_options()
+                    
+                    # Filter for Ticker, Call, Expiry, and EXACT Date
+                    mask = (df_all['ticker'] == calib_ticker) & \
+                           (df_all['type'] == 'Call') & \
+                           (df_all['expiry'] == '2026-02-20') & \
+                           (df_all['Date'].dt.date == calib_date)
+                    
+                    calib_final_df = df_all[mask].copy().sort_values("Strike")
+                    print(calib_final_df)
+                    
+                    if calib_final_df.empty:
+                        st.error("No data found for the specified parameters.")
+                        st.stop()
+                        
+                    # 2. Get Spot Price
+                    S_real, _, _ = get_stock_history_vol(calib_ticker, "2025-12-17")
+                    
+                    if not S_real:
+                        st.error("Could not retrieve underlying spot price.")
+                        st.stop()
+                    
+                    print(S_real)
+                    # 3. Prepare Vectors (All Strikes)
+                    # TimeToExp is constant for a single date
+                    T_exp = (pd.to_datetime(calib_exp) - pd.to_datetime(calib_date)).days / 365.0
+                    if T_exp < 0.001: T_exp = 0.001
+                    
+                    calib_final_df['TimeToExp'] = T_exp 
+                    
+                    market_prices = calib_final_df['Close'].values
+                    strikes_arr = calib_final_df['Strike'].values
+                    maturities = calib_final_df['TimeToExp'].values
+
+                    print(market_prices)
+                    print(strikes_arr)
+                    print(maturities)
+                    
+                    # 4. Run Calibration
+                    # Initial guess: [v0, vbar, rho, kappa, sigma]
+                    initial_guess = [0.04, 0.04, -0.7, 2.0, 0.3] 
+                    calibrator = HestonCalibrator(S_real, 0.05) # Assume r=5%
+                    
+                    res = calibrator.calibration(market_prices, strikes_arr, maturities, initial_guess)
+                    
+                    # 5. Process Results
+                    p = res.x
+                    params = {'v0': p[0], 'vbar': p[1], 'rho': p[2], 'kappa': p[3], 'sigma': p[4]}
+                    
+                    # Compute Model Prices for verification
+                    model_prices, _ = calibrator.get_prices_and_gradients(strikes_arr, maturities, p)
+                    price_rmse = np.sqrt(np.mean((model_prices - market_prices)**2))
+                    
+                    st.session_state["heston_calib_results"] = {
+                        "params": params,
+                        "rmse_price": price_rmse,
+                        "success": res.success,
+                        "ticker": calib_ticker,
+                        "selected_strikes": strikes_arr, # All strikes
+                        "dates_count": 1, 
+                        "market_prices": market_prices,
+                        "model_prices": model_prices,
+                        "S0": S_real
+                    }
+                    st.success(f"Calibration Successful! (RMSE: ${price_rmse:.4f})")
+                    
+                except Exception as e:
+                    st.error(f"Calibration Failed: {str(e)}")
+                    import traceback
+                    st.text(traceback.format_exc())
+
+    with col_c2:
+        st.subheader("2. Calibration Results")
+        if "heston_calib_results" in st.session_state:
+            res_obj = st.session_state["heston_calib_results"]
+            
+            # Validation for legacy state structure
+            if "params" not in res_obj:
+                del st.session_state["heston_calib_results"]
+                st.info("Previous calibration data was incompatible and has been cleared. Please run calibration again.")
+                res_obj = None
+            
+            if res_obj:
+                params = res_obj["params"]
+            
+            # Key Metrics
+            m1, m2, m3, m4, m5 = st.columns(5)
+            m1.metric("Status", "Converged" if res_obj["success"] else "Did Not Converge")
+            m2.metric("Price RMSE", f"${res_obj['rmse_price']:.4f}")
+            m3.metric("Strikes Used", f"{len(res_obj['selected_strikes'])}")
+            m4.metric("Data Points", f"{len(res_obj['market_prices'])}")
+            feller_val = 2 * params['kappa'] * params['vbar'] - params['sigma']**2
+            is_feller = feller_val > 0
+            m5.metric("Feller Condition ($2\\kappa\\theta > \\xi^2$)", 
+                      f"{'Satisfied' if is_feller else 'Violated'} ({feller_val:.4f})",
+                      delta_color="normal" if is_feller else "inverse", help="the Feller condition is not mandatory in the framework of this implementation")
+
+            st.divider()
+            
+            # Parameters
+            st.markdown("##### Calibrated Parameters")
+            cols_p = st.columns(5)
+            cols_p[0].metric("$\\nu_0$ (Init Var)", f"{params['v0']:.5f}")
+            cols_p[1].metric("$\\kappa$ (Speed)", f"{params['kappa']:.5f}")
+            cols_p[2].metric("$\\theta$ (Long-run)", f"{params['vbar']:.5f}")
+            cols_p[3].metric("$\\xi$ (Vol of Vol)", f"{params['sigma']:.5f}")
+            cols_p[4].metric("$\\rho$ (Corr)", f"{params['rho']:.5f}")
+            
+            # Plotting 
+            st.markdown("##### Visual Verification")
+            
+            # Create a nice plot showing Market vs Model prices
+            # Since we have many dates, maybe plot Price vs Strike for the latest date, 
+            # or Price vs Time for the ATM strike.
+            
+            # Let's show Price vs Strike for a snapshot (latest date)
+            # and a scatter of all points
+            
+            fig = go.Figure()
+            
+            # Scatter of all data points used
+            # X-axis: Strike, Y-axis: Price, Color: TimeToExp
+            fig.add_trace(go.Scatter(
+                x=res_obj["market_prices"], 
+                y=res_obj["model_prices"],
+                mode='markers',
+                name='Model vs Market',
+                marker=dict(color='#00CC96', size=6, opacity=0.7)
+            ))
+            
+            # Add a 45 degree line
+            min_val = min(res_obj["market_prices"].min(), res_obj["model_prices"].min())
+            max_val = max(res_obj["market_prices"].max(), res_obj["model_prices"].max())
+            
+            fig.add_trace(go.Scatter(
+                x=[min_val, max_val], y=[min_val, max_val],
+                mode='lines', name='Perfect Fit',
+                line=dict(color='white', dash='dash', width=1)
+            ))
+            
+            fig.update_layout(
+                title="Model Fit: Predicted vs Actual Prices",
+                xaxis_title="Market Price",
+                yaxis_title="Model Price",
+                template="plotly_dark",
+                height=400,
+                margin=dict(l=20, r=20, t=40, b=20)
+            )
+            
+            st.plotly_chart(fig, width="stretch")
+            
         else:
-             pass 
+            st.info("Click 'Run Calibration' to begin.")

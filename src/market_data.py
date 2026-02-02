@@ -24,7 +24,7 @@ def validate_api_key(api_key):
 @st.cache_data
 def load_preloaded_options():
     try:
-        df = pd.read_csv("data/preloaded_options.csv")
+        df = pd.read_csv("data/extended dataset.csv")
         df['Date'] = pd.to_datetime(df['Date'])
         return df
     except Exception as e:

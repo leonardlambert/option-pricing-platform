@@ -124,3 +124,39 @@ def plot_efficient_frontier(ef_risks, ef_rets, current_risk=None, current_ret=No
         template="plotly_dark"
     )
     return fig
+
+def plot_heston_calibration(market_df, model_df, title="Heston Calibration: Market vs Model IV"):
+    """
+    Plot Market Implied Volatility vs Model Implied Volatility.
+    market_df: DataFrame with ['Strike', 'IV']
+    model_df: DataFrame with ['Strike', 'IV']
+    """
+    fig = go.Figure()
+    
+    # Market Data
+    fig.add_trace(go.Scatter(
+        x=market_df['Strike'], 
+        y=market_df['IV'],
+        mode='markers',
+        name='Market IV',
+        marker=dict(color='#1f77b4', size=8, symbol='circle-open'),
+    ))
+    
+    # Model Data
+    fig.add_trace(go.Scatter(
+        x=model_df['Strike'], 
+        y=model_df['IV'],
+        mode='lines',
+        name='Heston Model IV',
+        line=dict(color='#ff7f0e', width=2),
+    ))
+    
+    fig.update_layout(
+        title=title,
+        xaxis_title="Strike Price",
+        yaxis_title="Implied Volatility",
+        template="plotly_dark",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    
+    return fig

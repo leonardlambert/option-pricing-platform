@@ -1,4 +1,5 @@
 import numpy as np
+from pricing.heston_calibration import HestonCalibrator
 
 def phi_bsm(u, T, r, sigma, S0):
     """
@@ -44,6 +45,11 @@ def phi_heston(
     return np.exp(
         C + D * v0 + iu * np.log(S0)
     )
+
+
+def phi_heston_2017(v0, theta, rho, kappa, sigma, S0, T, r, u):
+    calibrator = HestonCalibrator(S0, r)
+    return calibrator.characteristic_function(u, T, v0, theta, rho, kappa, sigma)
 
 def phi_vg(u, T, r, sigma, theta, nu, S0):
     """

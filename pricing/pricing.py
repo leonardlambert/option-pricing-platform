@@ -1,8 +1,5 @@
 import numpy as np
 from scipy.stats import norm
-from scipy.stats import norm
-
-# --- Black Scholes Merton ---
 
 def black_scholes_price(S, K, T, r, sigma, option_type):
     """
