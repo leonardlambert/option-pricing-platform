@@ -114,11 +114,11 @@ with st.sidebar:
 st.title("Option Pricing & Scenario Analysis Platform")
 
 #sections list
-tabs = st.tabs(["Option Pricing & Greeks", "Strategy Builder", "Strategy PnL Distribution", "Stress Testing", "Volatility Smile", "Volatility Surface", "Heston Model Calibration"])
+tabs = st.tabs(["Single Option Pricing & Greeks", "Option Spread Builder", "Strategy PnL Distribution", "Stress Testing", "Volatility Smile Construction", "Volatility Surface Construction", "Heston Model Calibration"])
 
 #TAB 1 : single option pricing
 with tabs[0]:
-    st.markdown("***Use cases***: Implements end-to-end option valuation using both closed-form and numerical pricing methods. Mirrors how trading and valuation teams benchmark prices across models and assess model risk. Directly applicable to pricing validation, trade booking checks and P&L explain.")
+    st.markdown("***Use cases***: Fast option valuation for various asset price processes, matching valuation / pricing desks workflows.", help ="This section mirrors how trading and valuation teams benchmark prices across models and assess model risk. Pricing backend based on custom pricing modules with Black-Scholes-Merton being closed-form and Variance Gamma / Merton Jump Diffusion using FFT-based Fourier inversion.")
     
     col1, col2, col3, col4 = st.columns(4)
     with col1:
@@ -201,7 +201,7 @@ with tabs[0]:
 
 #TAB 2 : strategy builder
 with tabs[1]:
-    st.markdown("***Use cases***: Replicates the construction and management of multi-leg option strategies as used by trading and structuring desks. Demonstrates book-level organization via JSON persistence, enabling reproducible analysis and auditability. Reflects real workflows for tracking strategy composition, exposure and lifecycle.")
+    st.markdown("***Use cases***: Fast construction of multi-leg option strategies under BSM assumptions, matching options trading / structuring desks workflows.", help="This section implements a persistent book-level organization via JSON data storage, enabling reproducible analysis and auditability. Reflects real workflows for tracking strategy composition, exposure and lifecycle.")
     
     col_setup, col_plot = st.columns([1, 4])
     
@@ -328,7 +328,7 @@ with tabs[1]:
 
 #TAB 3 : strategy PnL distribution
 with tabs[2]:
-    st.markdown("***Use cases***: Uses Monte Carlo simulations to model non-linear P&L distributions for option strategies. Illustrates how desks assess tail risk, asymmetry and scenario dispersion beyond point estimates. Directly relevant for risk management, strategy validation and client suitability analysis.")
+    st.markdown("***Use cases***: Running Monte Carlo simulations to assess future PnL distribution of the book, matching market risk desks workflows.", help="This section implements a visual interface to get a quick assessment of the future PnL distribution under the assumption that the underlying asset follows a GBM process.")
     
     if not st.session_state.book:
         st.warning("Book is empty. Add strategies in 'Strategy Builder' tab first.")
@@ -543,7 +543,7 @@ with tabs[2]:
 
 #TAB 4: strategy stress testing
 with tabs[3]:
-    st.markdown("***Use cases***: Implements stress testing through structured P&L decomposition and fast scenario analysis. Mirrors risk desk practices to isolate drivers (delta, volatility, convexity) under adverse market moves. Applicable to intraday risk monitoring and regulatory stress frameworks.")
+    st.markdown("***Use cases***: Running stress tests on a book of strategies, matching market risk / risk control desks workflows.", help="This section implements stress testing through fast scenario analysis based on realistic market scenarios. This is done by using Taylor approximation method to have a quick assesment of the main risk drivers")
     if not st.session_state.book:
         st.warning("Book is empty. Add strategies in 'Strategy Builder' tab first.")
     else:
@@ -701,8 +701,8 @@ with tabs[3]:
 
 #TAB 5: volatility smile
 with tabs[4]:
-    st.markdown("***Use cases***: Reconstructs implied volatility smiles from market data, highlighting skew and wing dynamics. Demonstrates understanding of how market structure and supply-demand shape option pricing inputs. Directly used by trading, structuring and model validation teams.")
-
+    st.markdown("***Use cases***: Construction of IV smiles from market data, matching vol trading / trading support desks workflows.", help="This section uses API and preloaded data to construct IV smiles, highlighting skew and wing dynamics. Highlights how market structure and supply-demand shape option pricing inputs.")
+    
     col_input, col_view = st.columns([1, 4])
     
     with col_input:
@@ -898,7 +898,7 @@ with tabs[4]:
                     st.success("Smile Generated!")
 
         st.divider()
-        with st.expander("Model & Data Details"):
+        with st.expander("model & data details"):
              st.markdown("This module fetches option chains across multiple strikes for a single expiration. It calculates the Implied Volatility for each strike using a numerical inversion of the Black-Scholes formula (Newton-Raphson), constructing the volatility smile that traders uses to quote prices.")
 
     with col_view:
@@ -1021,7 +1021,7 @@ with tabs[4]:
 
 #TAB 6: volatility surface
 with tabs[5]:
-    st.markdown("***Use cases***: Extends smile analysis across maturities to build a full implied volatility surface. Reflects standard desk tooling for term-structure analysis and model calibration inputs. Relevant for volatility trading, risk aggregation and model consistency checks.")
+    st.markdown("***Use cases***: Term structure and volatility surface analysis for model consistency checks, matching structuring / model validation desks workflows.", help = "This section extends smile analysis across maturities to build a full implied volatility surface. Reflects standard desk tooling for term-structure analysis and model calibration inputs.")
     
     col_s_input, col_s_view = st.columns([1, 4])
     
@@ -1330,36 +1330,31 @@ with tabs[5]:
 
 #TAB 7: Model Calibration (Heston)
 with tabs[6]:
-    st.markdown("***Use cases***: Implements a calibration workflow based on Cui (2017), focusing on speed and stability. Demonstrates practical model calibration under real data constraints, including convergence and robustness trade-offs. Mirrors how stochastic volatility models are calibrated and validated in trading and risk environments.")
-    
-    col_c1, col_c2 = st.columns([1, 4]) # Tighter left column
+    st.markdown("***Use cases***: Calibration of stochastic volatility models, matching model validation / quantitative modeling desks workflows.", help = "This section implements a calibration workflow based on Cui (2017), focusing on speed and stability. Demonstrates practical model calibration under real data constraints, including convergence and robustness trade-offs.")
+
+    col_c1, col_c2 = st.columns([1, 4])
     
     with col_c1:
-        st.subheader("1. Configuration")
+        st.subheader("Configuration")
         
-        # User only selects Ticker
         calib_ticker = st.selectbox("Ticker", ["AAPL", "NVDA", "SPY"], key="calib_ticker").upper()
         
-        # Fixed Parameters Display
-        st.caption("Fixed Parameters")
-        st.text_input("Market Date", value="2025-12-17", disabled=True, key="calib_date_disp")
+        st.caption("Fixed parameters")
+        st.text_input("Market date", value="2025-12-17", disabled=True, key="calib_date_disp")
         st.text_input("Expiration", value="2026-02-20", disabled=True, key="calib_exp_disp")
         
-        # Internal Fixed Parameters
         calib_date = datetime(2025, 12, 17).date()
         calib_exp = datetime(2026, 2, 20).date()
         calib_type = "C" # Call Only
 
-        if st.button("Run Calibration", key="run_heston_calib"):
+        if st.button("Run calibration", key="run_heston_calib"):
             with st.spinner("Fetching smile for 2025-12-17..."):
                 try:
                     from src.market_data import load_preloaded_options, get_stock_history_vol
                     from pricing.heston_calibration import HestonCalibrator
                     
-                    # 1. Load & Filter Data
                     df_all = load_preloaded_options()
                     
-                    # Filter for Ticker, Call, Expiry, and EXACT Date
                     mask = (df_all['ticker'] == calib_ticker) & \
                            (df_all['type'] == 'Call') & \
                            (df_all['expiry'] == '2026-02-20') & \
@@ -1372,7 +1367,6 @@ with tabs[6]:
                         st.error("No data found for the specified parameters.")
                         st.stop()
                         
-                    # 2. Get Spot Price
                     S_real, _, _ = get_stock_history_vol(calib_ticker, "2025-12-17")
                     
                     if not S_real:
@@ -1380,8 +1374,6 @@ with tabs[6]:
                         st.stop()
                     
                     print(S_real)
-                    # 3. Prepare Vectors (All Strikes)
-                    # TimeToExp is constant for a single date
                     T_exp = (pd.to_datetime(calib_exp) - pd.to_datetime(calib_date)).days / 365.0
                     if T_exp < 0.001: T_exp = 0.001
                     
@@ -1395,18 +1387,14 @@ with tabs[6]:
                     print(strikes_arr)
                     print(maturities)
                     
-                    # 4. Run Calibration
-                    # Initial guess: [v0, vbar, rho, kappa, sigma]
                     initial_guess = [0.04, 0.04, -0.7, 2.0, 0.3] 
-                    calibrator = HestonCalibrator(S_real, 0.05) # Assume r=5%
+                    calibrator = HestonCalibrator(S_real, 0.05) 
                     
                     res = calibrator.calibration(market_prices, strikes_arr, maturities, initial_guess)
                     
-                    # 5. Process Results
                     p = res.x
                     params = {'v0': p[0], 'vbar': p[1], 'rho': p[2], 'kappa': p[3], 'sigma': p[4]}
                     
-                    # Compute Model Prices for verification
                     model_prices, _ = calibrator.get_prices_and_gradients(strikes_arr, maturities, p)
                     price_rmse = np.sqrt(np.mean((model_prices - market_prices)**2))
                     
@@ -1415,7 +1403,7 @@ with tabs[6]:
                         "rmse_price": price_rmse,
                         "success": res.success,
                         "ticker": calib_ticker,
-                        "selected_strikes": strikes_arr, # All strikes
+                        "selected_strikes": strikes_arr, 
                         "dates_count": 1, 
                         "market_prices": market_prices,
                         "model_prices": model_prices,
@@ -1433,17 +1421,16 @@ with tabs[6]:
             st.markdown("""
             The calibrator uses the **2025-12-17** close prices of **AAPL, NVDA and SPY Call Options**, with expiration **2026-02-20**. 
             
-            It uses the **HestonCalibrator** class which is based on the paper:
+            It uses the **HestonCalibrator** class which is based on the paper:  
             ***Full and fast calibration of the Heston stochastic volatility model***  
-            *by Cui, del Baño Rollin & Germano*
+            by *Cui, del Baño Rollin & Germano*
             """)
 
     with col_c2:
-        st.subheader("2. Calibration Results")
+        st.subheader("Calibration Results")
         if "heston_calib_results" in st.session_state:
             res_obj = st.session_state["heston_calib_results"]
             
-            # Validation for legacy state structure
             if "params" not in res_obj:
                 del st.session_state["heston_calib_results"]
                 st.info("Previous calibration data was incompatible and has been cleared. Please run calibration again.")
@@ -1452,21 +1439,21 @@ with tabs[6]:
             if res_obj:
                 params = res_obj["params"]
             
-            # Key Metrics
+            #metrics display
             m1, m2, m3, m4, m5 = st.columns(5)
-            m1.metric("Status", "Converged" if res_obj["success"] else "Did Not Converge")
+            m1.metric("Status", "Converged" if res_obj["success"] else "Did not converge")
             m2.metric("Price RMSE", f"${res_obj['rmse_price']:.4f}")
             m3.metric("Strikes Used", f"{len(res_obj['selected_strikes'])}")
             m4.metric("Data Points", f"{len(res_obj['market_prices'])}")
             feller_val = 2 * params['kappa'] * params['vbar'] - params['sigma']**2
             is_feller = feller_val > 0
-            m5.metric("Feller Condition ($2\\kappa\\theta > \\xi^2$)", 
+            m5.metric("Feller condition ($2\\kappa\\theta > \\xi^2$)", 
                       f"{'Satisfied' if is_feller else 'Violated'} ({feller_val:.4f})",
                       delta_color="normal" if is_feller else "inverse", help="the Feller condition is not mandatory in the framework of this implementation")
 
             st.divider()
             
-            # Parameters
+            #parameters display
             st.markdown("##### Calibrated Parameters")
             cols_p = st.columns(5)
             cols_p[0].metric("$\\nu_0$ (Init Var)", f"{params['v0']:.5f}")
@@ -1475,20 +1462,9 @@ with tabs[6]:
             cols_p[3].metric("$\\xi$ (Vol of Vol)", f"{params['sigma']:.5f}")
             cols_p[4].metric("$\\rho$ (Corr)", f"{params['rho']:.5f}")
             
-            # Plotting 
+
             st.markdown("##### Visual Verification")
-            
-            # Create a nice plot showing Market vs Model prices
-            # Since we have many dates, maybe plot Price vs Strike for the latest date, 
-            # or Price vs Time for the ATM strike.
-            
-            # Let's show Price vs Strike for a snapshot (latest date)
-            # and a scatter of all points
-            
             fig = go.Figure()
-            
-            # Scatter of all data points used
-            # X-axis: Strike, Y-axis: Price, Color: TimeToExp
             fig.add_trace(go.Scatter(
                 x=res_obj["market_prices"], 
                 y=res_obj["model_prices"],
@@ -1496,8 +1472,7 @@ with tabs[6]:
                 name='Model vs Market',
                 marker=dict(color='#00CC96', size=6, opacity=0.7)
             ))
-            
-            # Add a 45 degree line
+
             min_val = min(res_obj["market_prices"].min(), res_obj["model_prices"].min())
             max_val = max(res_obj["market_prices"].max(), res_obj["model_prices"].max())
             
@@ -1519,4 +1494,4 @@ with tabs[6]:
             st.plotly_chart(fig, width="stretch")
             
         else:
-            st.info("Click 'Run Calibration' to begin.")
+            st.info("select ticker and click Run calibration button to begin.")
