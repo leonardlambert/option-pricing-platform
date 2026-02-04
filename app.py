@@ -229,7 +229,7 @@ with tabs[1]:
         st.divider()
         strat_name = st.text_input("Strategy Name", value="My Strategy", placeholder="e.g. Iron Condor", key="strat_name_input")
         
-        if st.button("💾 Save Strategy"):
+        if st.button("Save Strategy"):
             save_legs = []
             for leg in legs:
                 # Use premiums calculated for saving
